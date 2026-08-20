@@ -104,3 +104,44 @@ class GeocodeBoundsTests(TestCase):
         self.assertTrue(LAT_MIN < CITY_LAT < LAT_MAX)
         self.assertTrue(LON_MIN < CITY_LON < LON_MAX)
         self.assertLess(LAT_MAX - LAT_MIN, 1.0, "рамка не должна быть на пол-страны")
+
+
+class TemplateHygieneTests(TestCase):
+    """
+    Страницы не должны показывать служебный текст.
+
+    Появилось после реального случая: многострочный комментарий {# ... #}
+    Django комментарием НЕ считает (только однострочный) и вывел пояснение
+    для разработчика прямо в таблицу обращений на глазах у заказчика.
+    Для многострочных есть тег comment.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.admin = get_user_model().objects.create_user(
+            email="adm@meriya.kg", password="pass12345", role="admin")
+
+    def setUp(self):
+        self.client.login(email="adm@meriya.kg", password="pass12345")
+
+    def test_no_leaked_comment_markers_on_pages(self):
+        for url in ("/", "/tickets/new/", "/bot/settings/", "/bot/keys/",
+                    "/bot/answers/", "/broadcasts/", "/stats/", "/map/",
+                    "/directory/", "/staff/", "/audit/"):
+            with self.subTest(url=url):
+                html = self.client.get(url).content.decode()
+                for marker in ("{#", "#}", "{%", "%}"):
+                    self.assertNotIn(marker, html,
+                                     f"на странице {url} видна разметка шаблона")
+
+    def test_templates_have_no_multiline_hash_comments(self):
+        """Однострочный {# … #} допустим, многострочный — нет."""
+        from django.conf import settings
+        offenders = []
+        for template_dir in [settings.BASE_DIR / "templates"]:
+            for path in template_dir.rglob("*.html"):
+                for number, line in enumerate(path.read_text().splitlines(), 1):
+                    if "{#" in line and "#}" not in line:
+                        offenders.append(f"{path.name}:{number}")
+        self.assertEqual(offenders, [],
+                         "многострочные {# #} выводятся на страницу как текст")

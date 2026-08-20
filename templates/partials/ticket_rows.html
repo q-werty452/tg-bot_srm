@@ -9,9 +9,11 @@
   {% for t in page.object_list %}
     <tr>
       <td style="width:56px">
-        {# Файл может не открыться (повреждён при загрузке, удалён с диска) —
-           тогда вместо значка «сломанная картинка» показываем ту же заглушку,
-           что и у заявок без фото. #}
+        {% comment %}
+          Файл может не открыться: повреждён при загрузке или удалён с диска.
+          Тогда вместо значка «сломанная картинка» показываем ту же заглушку,
+          что и у заявок без фото.
+        {% endcomment %}
         {% if t.preview %}<img class="thumb" src="{{ t.preview.file.url }}" alt="" loading="lazy"
              onerror="this.onerror=null; this.hidden=true; this.nextElementSibling.hidden=false;">
         <div class="thumb-empty" hidden><svg class="i"><use href="{% static 'icons.svg' %}#photo"/></svg></div>
