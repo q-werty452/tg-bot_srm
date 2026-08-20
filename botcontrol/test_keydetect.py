@@ -226,3 +226,53 @@ class SmokeTestModelTests(TestCase):
         self.key.refresh_from_db()
         self.assertEqual(self.key.model, "gemini-3.5-flash")
         self.assertContains(response, "проверена диалогом")
+
+
+class OpenRouterTests(TestCase):
+    """OpenRouter — шлюз к чужим моделям, протокол как у OpenAI."""
+
+    def test_key_shape_recognised(self):
+        provider, hint = keydetect.guess("sk-or-v1-" + "a" * 64)
+        self.assertEqual(provider, "openrouter")
+        self.assertIn("OpenRouter", hint)
+
+    def test_not_confused_with_openai(self):
+        self.assertEqual(keydetect.guess("sk-proj-" + "x" * 40)[0], "openai")
+        self.assertEqual(keydetect.guess("sk-or-v1-" + "x" * 40)[0], "openrouter")
+
+    def test_checked_first_for_its_own_key(self):
+        asked = []
+
+        def fetch(provider, key):
+            asked.append(provider)
+            if provider != "openrouter":
+                raise RuntimeError("401")
+            return ["openai/gpt-4o-mini", "google/gemini-2.0-flash-exp"]
+
+        provider, models, _ = keydetect.detect("sk-or-v1-" + "b" * 40, fetch)
+        self.assertEqual(provider, "openrouter")
+        self.assertEqual(asked, ["openrouter"], "лишних запросов быть не должно")
+        self.assertIn("openai/gpt-4o-mini", models)
+
+    def test_in_provider_choices(self):
+        self.assertIn("openrouter", dict(ProviderKey.Provider.choices))
+
+    def test_model_list_uses_openrouter_endpoint(self):
+        from botcontrol.views import _fetch_models
+        with patch("botcontrol.views.httpx.get") as get:
+            get.return_value.json.return_value = {"data": [
+                {"id": "openai/gpt-4o-mini"}, {"id": "openai/whisper-1"},
+                {"id": "google/gemini-2.0-flash-exp"},
+            ]}
+            models = _fetch_models("openrouter", "sk-or-v1-x")
+        self.assertIn("openrouter.ai", get.call_args.args[0])
+        self.assertEqual(models, ["google/gemini-2.0-flash-exp", "openai/gpt-4o-mini"],
+                         "whisper не для переписки и в список попасть не должен")
+
+    def test_smoke_test_hits_openrouter(self):
+        from botcontrol.views import smoke_test_model
+        with patch("botcontrol.views.httpx.post") as post:
+            post.return_value.raise_for_status.return_value = None
+            smoke_test_model("openrouter", "sk-or-v1-x", "openai/gpt-4o-mini")
+        self.assertIn("openrouter.ai", post.call_args.args[0])
+        self.assertEqual(len(post.call_args.kwargs["json"]["messages"]), 3)

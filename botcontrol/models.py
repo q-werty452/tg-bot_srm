@@ -71,6 +71,7 @@ class ProviderKey(SecretFieldMixin):
         OPENAI = "openai", "GPT (OpenAI)"
         GEMINI = "gemini", "Gemini (Google)"
         CLAUDE = "claude", "Claude (Anthropic)"
+        OPENROUTER = "openrouter", "OpenRouter"
 
     provider = models.CharField(
         "провайдер", max_length=16, choices=Provider.choices, unique=True,

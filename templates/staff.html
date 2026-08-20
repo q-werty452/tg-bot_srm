@@ -34,13 +34,13 @@
           <form method="post" style="display:inline">{% csrf_token %}
             <input type="hidden" name="action" value="toggle">
             <input type="hidden" name="id" value="{{ u.pk }}">
-            <button class="btn">{% if u.is_active %}Отключить{% else %}Включить{% endif %}</button>
+            <button class="btn ghost small">{% if u.is_active %}Отключить{% else %}Включить{% endif %}</button>
           </form>
           {% endif %}
           <form method="post" style="display:inline">{% csrf_token %}
             <input type="hidden" name="action" value="reset_password">
             <input type="hidden" name="id" value="{{ u.pk }}">
-            <button class="btn">Сбросить пароль</button>
+            <button class="btn ghost small">Сбросить пароль</button>
           </form>
         </td>
       </tr>

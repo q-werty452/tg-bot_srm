@@ -19,12 +19,13 @@ botcontrol/keydetect.py — «а от какого это ИИ ключ?»
 import re
 
 # Порядок проверки, если по виду ничего не понятно.
-ALL_PROVIDERS = ("openai", "gemini", "claude")
+ALL_PROVIDERS = ("openai", "gemini", "claude", "openrouter")
 
 # Начала ключей: подсказка -> кого проверять первым.
 # Список открытый: не совпало ничего — просто проверим всех по очереди.
 SHAPES: list[tuple[str, str, str]] = [
     # (регулярка, провайдер, человеческое описание для подсказки)
+    (r"^sk-or-v1-", "openrouter", "похоже на ключ OpenRouter"),
     (r"^sk-ant-", "claude", "похоже на ключ Anthropic"),
     (r"^AIza[0-9A-Za-z_\-]{30,}$", "gemini", "похоже на ключ Google (старый формат)"),
     (r"^AQ\.[0-9A-Za-z_\-]{20,}$", "gemini", "похоже на ключ Google (новый формат)"),

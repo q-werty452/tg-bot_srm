@@ -100,6 +100,21 @@ def _fetch_models(provider: str, key: str) -> list[str]:
             and not any(x in m["name"] for x in ("tts", "image", "embed", "aqa"))
         )
 
+    if provider == "openrouter":
+        # OpenRouter — шлюз к чужим моделям, протокол как у OpenAI.
+        # Список отдаёт без ключа, но с ним видно и то, что доступно лично вам.
+        response = httpx.get("https://openrouter.ai/api/v1/models",
+                             headers={"Authorization": f"Bearer {key}"}, timeout=20)
+        response.raise_for_status()
+        rows = response.json().get("data", [])
+        # Имена составные: openai/gpt-4o-mini, google/gemini-2.0-flash.
+        # Отсекаем то, что не для переписки.
+        return sorted(
+            r["id"] for r in rows
+            if not any(x in r["id"] for x in ("whisper", "tts", "embed", "image",
+                                              "vision-only", "moderation"))
+        )
+
     if provider == "claude":
         response = httpx.get("https://api.anthropic.com/v1/models",
                              headers={"x-api-key": key,
@@ -146,9 +161,12 @@ def smoke_test_model(provider: str, key: str, model: str) -> str:
                 timeout=30)
             response.raise_for_status()
 
-        elif provider == "openai":
+        elif provider in ("openai", "openrouter"):
+            url = ("https://openrouter.ai/api/v1/chat/completions"
+                   if provider == "openrouter"
+                   else "https://api.openai.com/v1/chat/completions")
             response = httpx.post(
-                "https://api.openai.com/v1/chat/completions",
+                url,
                 headers={"Authorization": f"Bearer {key}"},
                 json={"model": model,
                       "messages": [{"role": m["role"], "content": m["content"]}

@@ -13,14 +13,14 @@
     <div class="card">
       <h3 style="margin-top:0">Ключи моделей ИИ</h3>
       <table class="list">
-        <thead><tr><th>Провайдер</th><th>Ключ</th><th>Модель</th><th>Проверка</th><th></th></tr></thead>
+        <thead><tr><th>Провайдер</th><th class="nowrap">Ключ</th><th>Модель</th><th>Проверка</th><th></th></tr></thead>
         <tbody>
         {% for row in providers %}
           <tr>
-            <td><b>{{ row.label }}</b></td>
-            <td class="mono">{{ row.obj.masked|default:"не задан" }}</td>
-            <td class="small">{{ row.obj.model|default:"—" }}</td>
-            <td class="small">
+            <td class="nowrap"><b>{{ row.label }}</b></td>
+            <td class="mono nowrap">{{ row.obj.masked|default:"не задан" }}</td>
+            <td class="small nowrap">{{ row.obj.model|default:"—" }}</td>
+            <td class="small nowrap">
               {% if row.obj.last_check_ok is None %}<span class="muted">не проверялся</span>
               {% elif row.obj.last_check_ok %}<span class="rating-mark up">работает · {{ row.obj.last_check_at|date:"d.m H:i" }}</span>
               {% else %}<span class="rating-mark down">ошибка · {{ row.obj.last_check_at|date:"d.m H:i" }}</span>{% endif %}
@@ -39,11 +39,11 @@
       </table>
 
       <hr class="sep">
-      <form method="post">
+      <form method="post" autocomplete="off">
         {% csrf_token %}<input type="hidden" name="action" value="detect_key">
         <div class="field">
           <label>Добавить ключ — провайдер определится сам</label>
-          <input type="password" name="key" autocomplete="off"
+          <input type="password" name="key" autocomplete="new-password"
                  placeholder="вставьте ключ целиком" required>
         </div>
         <button class="btn">Определить и сохранить</button>
@@ -55,7 +55,7 @@
 
       <details style="margin-top:14px">
         <summary class="muted small" style="cursor:pointer">Указать провайдера вручную</summary>
-        <form method="post" style="margin-top:10px">
+        <form method="post" style="margin-top:10px" autocomplete="off">
           {% csrf_token %}<input type="hidden" name="action" value="save_key">
           <div style="display:grid; grid-template-columns: 160px 1fr; gap:12px">
             <div class="field"><label>Провайдер</label>
@@ -63,7 +63,7 @@
                 {% for row in providers %}<option value="{{ row.name }}">{{ row.label }}</option>{% endfor %}
               </select></div>
             <div class="field"><label>Ключ (заменит прежний)</label>
-              <input type="password" name="key" autocomplete="off" required></div>
+              <input type="password" name="key" autocomplete="new-password" required></div>
           </div>
           <button class="btn ghost">Сохранить без проверки</button>
         </form>
@@ -123,12 +123,19 @@
         <p class="muted small">Токены не заведены — бот работает на токене из своего файла .env.</p>
       {% endfor %}
       <hr class="sep">
-      <form method="post">
+      {% comment %}
+        autocomplete="off" на форме и new-password на полях: без этого Chrome
+        принимает пару «текст + пароль» за форму входа и подставляет туда почту
+        и пароль сотрудника. Их легко сохранить вместо токена бота.
+      {% endcomment %}
+      <form method="post" autocomplete="off">
         {% csrf_token %}<input type="hidden" name="action" value="add_bot">
         <div class="field"><label>Название</label>
-          <input type="text" name="name" maxlength="100" placeholder="Основной бот" required></div>
+          <input type="text" name="name" maxlength="100" placeholder="Основной бот"
+                 autocomplete="off" required></div>
         <div class="field"><label>Токен от @BotFather</label>
-          <input type="password" name="token" autocomplete="off" placeholder="123456:AA…" required></div>
+          <input type="password" name="token" autocomplete="new-password"
+                 placeholder="123456:AA…" required></div>
         <button class="btn ghost" style="width:100%; justify-content:center">Добавить бота</button>
       </form>
     </div>

@@ -22,7 +22,7 @@
           {% for e in executors %}<option value="{{ e.pk }}" {% if c.default_executor_id == e.pk %}selected{% endif %}>{{ e }}</option>{% endfor %}
         </select></td>
         <td><input type="checkbox" name="is_active" {% if c.is_active %}checked{% endif %} form="cat-{{ c.pk }}"></td>
-        <td><button class="btn" form="cat-{{ c.pk }}">Сохранить</button></td>
+        <td><button class="btn ghost" form="cat-{{ c.pk }}">Сохранить</button></td>
       </tr>
       {% endfor %}
       <tr>
@@ -48,7 +48,7 @@
           <form method="post">{% csrf_token %}
             <input type="hidden" name="action" value="toggle_district">
             <input type="hidden" name="id" value="{{ d.pk }}">
-            <button class="btn">{% if d.is_active %}Выключить{% else %}Включить{% endif %}</button>
+            <button class="btn ghost small">{% if d.is_active %}Выключить{% else %}Включить{% endif %}</button>
           </form>
         </td>
       </tr>
@@ -74,7 +74,7 @@
           <form method="post">{% csrf_token %}
             <input type="hidden" name="action" value="toggle_executor">
             <input type="hidden" name="id" value="{{ e.pk }}">
-            <button class="btn">{% if e.is_active %}Выключить{% else %}Включить{% endif %}</button>
+            <button class="btn ghost small">{% if e.is_active %}Выключить{% else %}Включить{% endif %}</button>
           </form>
         </td>
       </tr>
@@ -110,7 +110,7 @@
           <form method="post">{% csrf_token %}
             <input type="hidden" name="action" value="delete_contact">
             <input type="hidden" name="id" value="{{ c.pk }}">
-            <button class="btn btn-danger">Удалить</button>
+            <button class="btn ghost small danger-text">Удалить</button>
           </form>
         </td>
       </tr>

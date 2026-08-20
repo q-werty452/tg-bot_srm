@@ -182,10 +182,17 @@ table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
   border: 1px solid var(--border); background: var(--neutral-soft); display: block;
 }
 .thumb-empty {
-  width: 44px; height: 44px; border-radius: 8px; border: 1px dashed var(--border);
-  display: flex; align-items: center; justify-content: center; color: #B9C2D2;
+  width: 44px; height: 44px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--neutral-soft);
+  display: flex; align-items: center; justify-content: center; color: #C2CAD8;
 }
 .thumb-empty .i { width: 19px; height: 19px; }
+
+/* Атрибут hidden обязан побеждать display из классов: у правила браузера
+   [hidden]{display:none} специфичность ниже любого класса, и элемент
+   остаётся на экране. Ловилось на превью повреждённого фото: пряталась
+   картинка, а на странице оставались обе — и она, и заглушка. */
+[hidden] { display: none !important; }
 
 /* чипы и статусы */
 .chip {
@@ -306,7 +313,7 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
   background: var(--accent, #2F6FB4); opacity: .85; }
 .bar-h b { text-align: right; }
 .tile-danger b { color: #E5484D; }
-.btn-danger { color: #E5484D; border-color: #E5484D33; }
+.btn.ghost.danger-text { color: var(--danger); border-color: #E5484D33; }
 .btn-bare { background: none; border: 0; padding: 4px; cursor: pointer; color: inherit; }
 .page-actions { margin-top: 16px; }
 
@@ -331,3 +338,10 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
 /* Ссылка на приложенный файл (не картинку) */
 .file-link { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .file-link .i { width: 15px; height: 15px; }
+
+/* Значения, которые нельзя рвать переносом: ключи, модели, номера */
+.nowrap { white-space: nowrap; }
+
+/* Короткая реплика в переписке не должна схлопываться в узкий столбик:
+   без минимальной ширины «Привет» превращается в лесенку из трёх строк. */
+.msg { min-width: 190px; }
