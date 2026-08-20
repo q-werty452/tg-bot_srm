@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}#{{ t.number }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <a href="{% url 'dashboard' %}" class="btn ghost small">← К списку</a>
+  <h1>#{{ t.number }}</h1>
+  {% if t.is_overdue %}<span class="badge overdue">Просрочена</span>
+  {% else %}<span class="badge st-{{ t.status }}">{{ t.get_status_display }}</span>{% endif %}
+  <div class="spacer"></div>
+  <span class="muted small">создана {{ t.created_at|date:"d.m.Y H:i" }}</span>
+</div>
+
+<div class="ticket-grid">
+  <div>
+    <div class="card">
+      <form method="post" action="{% url 'ticket_action' t.number %}" class="inline-field">
+        {% csrf_token %}<input type="hidden" name="action" value="title">
+        <label>Заголовок</label>
+        <div style="display:flex; gap:8px">
+          <input type="text" name="title" value="{{ t.title }}" maxlength="200">
+          <button class="btn ghost small" title="Сохранить">
+            <svg class="i"><use href="{% static 'icons.svg' %}#check"/></svg></button>
+        </div>
+      </form>
+
+      <hr class="sep">
+      <div class="thread">
+        {% for m in messages_list %}
+          <div class="msg {{ m.author }}">
+            <div class="author">
+              {% if m.author == 'staff' %}{{ m.staff_user.get_full_name|default:"Сотрудник" }}
+              {% else %}{{ m.get_author_display }}{% endif %}
+            </div>
+            {{ m.text|linebreaksbr }}
+            {% if m.attachments.all %}
+              <div class="photos">
+                {% for a in m.attachments.all %}
+                  {% if a.is_image %}
+                    <a href="{{ a.file.url }}" target="_blank"><img src="{{ a.file.url }}" alt="фото"
+                       onerror="this.onerror=null; this.replaceWith(Object.assign(document.createElement('span'), {className:'muted small', textContent:'файл не открывается'}));"></a>
+                  {% else %}
+                    <a href="{{ a.file.url }}" target="_blank" class="file-link">
+                      <svg class="i"><use href="{% static 'icons.svg' %}#download"/></svg>{{ a.file.name }}</a>
+                  {% endif %}
+                {% endfor %}
+              </div>
+            {% endif %}
+            <small>
+              {{ m.created_at|date:"d.m H:i" }}
+              {% if m.rating == 'up' %} · <span class="rating-mark up">житель: помогло</span>
+              {% elif m.rating == 'down' %} · <span class="rating-mark down">житель: не помогло</span>{% endif %}
+            </small>
+          </div>
+        {% empty %}
+          <div class="empty"><p>Сообщений пока нет.</p></div>
+        {% endfor %}
+      </div>
+
+      <div class="reply-box">
+        <form method="post" action="{% url 'ticket_action' t.number %}">
+          {% csrf_token %}<input type="hidden" name="action" value="reply">
+          <label>Ответ жителю — уйдёт в Telegram от имени бота</label>
+          <textarea name="text" required placeholder="Напишите ответ…"></textarea>
+          <div class="actions">
+            <button class="btn"><svg class="i"><use href="{% static 'icons.svg' %}#send"/></svg>Отправить жителю</button>
+            <span class="muted small">
+              {% if t.answer_mode == 'ai' %}Сейчас в этом чате отвечает ИИ{% else %}Чат перехвачен: ИИ молчит{% endif %}
+            </span>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3 style="font-size:13px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin:0 0 12px">Внутренние заметки</h3>
+      {% for n in t.notes.all %}
+        <div class="note">{{ n.text|linebreaksbr }}<small>{{ n.user|default:"—" }} · {{ n.created_at|date:"d.m.Y H:i" }}</small></div>
+      {% empty %}<p class="muted small">Заметок нет. Житель их не видит.</p>{% endfor %}
+      <form method="post" action="{% url 'ticket_action' t.number %}">
+        {% csrf_token %}<input type="hidden" name="action" value="note">
+        <div style="display:flex; gap:8px">
+          <input type="text" name="text" placeholder="Добавить заметку для коллег…" required>
+          <button class="btn ghost small"><svg class="i"><use href="{% static 'icons.svg' %}#plus"/></svg></button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="card">
+      <h3>Кто отвечает</h3>
+      <form method="post" action="{% url 'ticket_action' t.number %}">
+        {% csrf_token %}<input type="hidden" name="action" value="mode">
+        {% if t.answer_mode == 'ai' %}
+          <input type="hidden" name="mode" value="staff">
+          <p class="small" style="margin-top:0">Отвечает <b>ИИ</b>. Перехватите разговор, чтобы бот замолчал и ответы писал только сотрудник.</p>
+          <button class="btn ghost" style="width:100%; justify-content:center">Перехватить разговор</button>
+        {% else %}
+          <input type="hidden" name="mode" value="ai">
+          <p class="small" style="margin-top:0">Разговор ведёт <b>сотрудник</b>, ИИ молчит.</p>
+          <button class="btn ghost" style="width:100%; justify-content:center">Вернуть ИИ</button>
+        {% endif %}
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Заявка</h3>
+      <form method="post" action="{% url 'ticket_action' t.number %}" class="inline-field">
+        {% csrf_token %}<input type="hidden" name="action" value="status">
+        <label>Статус</label>
+        <select name="status" onchange="this.form.submit()">
+          {% for value, label in statuses %}
+            <option value="{{ value }}" {% if t.status == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <form method="post" action="{% url 'ticket_action' t.number %}" class="inline-field">
+        {% csrf_token %}<input type="hidden" name="action" value="category">
+        <label>Категория</label>
+        <select name="category" onchange="this.form.submit()">
+          <option value="">—</option>
+          {% for c in categories %}
+            <option value="{{ c.slug }}" {% if t.category_id == c.id %}selected{% endif %}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <form method="post" action="{% url 'ticket_action' t.number %}" class="inline-field">
+        {% csrf_token %}<input type="hidden" name="action" value="district">
+        <label>Район</label>
+        <select name="district" onchange="this.form.submit()">
+          <option value="">—</option>
+          {% for d in districts %}
+            <option value="{{ d.slug }}" {% if t.district_id == d.id %}selected{% endif %}>{{ d.name }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <form method="post" action="{% url 'ticket_action' t.number %}" class="inline-field">
+        {% csrf_token %}<input type="hidden" name="action" value="address">
+        <label>Адрес</label>
+        <div style="display:flex; gap:8px">
+          <input type="text" name="address" value="{{ t.address }}" maxlength="250">
+          <button class="btn ghost small"><svg class="i"><use href="{% static 'icons.svg' %}#check"/></svg></button>
+        </div>
+      </form>
+      {% if t.due_at %}
+      <div class="kv"><span>Срок</span>
+        <span class="{% if t.is_overdue %}rating-mark down{% endif %} mono">{{ t.due_at|date:"d.m.Y H:i" }}</span>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h3>Исполнение</h3>
+      <form method="post" action="{% url 'ticket_action' t.number %}" class="inline-field">
+        {% csrf_token %}<input type="hidden" name="action" value="executor">
+        <label>Исполнитель (МП)</label>
+        <select name="executor" onchange="this.form.submit()">
+          <option value="">—</option>
+          {% for e in executors %}
+            <option value="{{ e.id }}" {% if t.executor_id == e.id %}selected{% endif %}>{{ e }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <form method="post" action="{% url 'ticket_action' t.number %}" class="inline-field">
+        {% csrf_token %}<input type="hidden" name="action" value="assignee">
+        <label>Ответственный сотрудник</label>
+        <select name="assignee" onchange="this.form.submit()">
+          <option value="">—</option>
+          {% for s in staff %}
+            <option value="{{ s.id }}" {% if t.assignee_id == s.id %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Житель</h3>
+      <div class="kv"><span>Имя</span><b>{{ t.citizen }}</b></div>
+      {% if t.citizen.username %}<div class="kv"><span>Telegram</span><span>@{{ t.citizen.username }}</span></div>{% endif %}
+      {% if t.citizen.phone %}<div class="kv"><span>Телефон</span><span class="mono">{{ t.citizen.phone }}</span></div>{% endif %}
+      <div class="kv"><span>Обращений</span><span>{{ t.citizen.tickets.count }}</span></div>
+    </div>
+
+    <div class="card">
+      <h3>История изменений</h3>
+      <ul class="events">
+        {% for e in events %}
+          <li>{{ e.created_at|date:"d.m H:i" }} — {{ e.human }}{% if e.user %} ({{ e.user }}){% endif %}</li>
+        {% empty %}<li>Изменений не было.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

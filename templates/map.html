@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Карта{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Карта обращений</h1></div>
+
+{% if points %}
+<div class="card">
+  <div id="map" style="height: 70vh; border-radius: 8px;"></div>
+  <p class="muted small mb">Точек на карте: {{ points|length }}.
+    {% if without_coords %}Без координат: {{ without_coords }} — их адреса ещё не распознаны
+    (запусти на сервере: python manage.py geocode).{% endif %}
+    Карте нужен интернет: подложка загружается с OpenStreetMap.</p>
+</div>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const map = L.map('map');
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              {attribution: '&copy; OpenStreetMap'}).addTo(map);
+  const points = {{ points_json|safe }};
+  const group = L.featureGroup();
+  for (const p of points) {
+    L.circleMarker([p.lat, p.lon], {
+      radius: 8, weight: 2,
+      color: p.overdue ? '#E5484D' : '#2F6FB4',
+      fillColor: p.overdue ? '#E5484D' : '#2F6FB4', fillOpacity: .35,
+    }).bindPopup(
+      '<b>#' + p.number + '</b><br>' + p.title + '<br>' + p.status +
+      '<br><a href="/tickets/' + p.number + '/">Открыть карточку</a>'
+    ).addTo(group);
+  }
+  group.addTo(map);
+  map.fitBounds(group.getBounds().pad(0.2));
+</script>
+{% else %}
+<div class="card"><div class="empty">
+  <p>Пока ни у одной заявки нет координат.</p>
+  <p class="muted">Координаты появляются из адресов: запусти на сервере
+  <span class="mono">python manage.py geocode</span>
+  {% if without_coords %} — ждут распознавания: {{ without_coords }} адресов{% endif %}.
+  Карте и геокодеру нужен интернет.</p>
+</div></div>
+{% endif %}
+{% endblock %}

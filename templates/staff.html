@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Сотрудники{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Сотрудники</h1></div>
+
+<div class="card">
+  <h2>Добавить сотрудника</h2>
+  <form method="post" class="filters">{% csrf_token %}
+    <input type="hidden" name="action" value="add">
+    <input name="email" type="email" placeholder="email" required>
+    <input name="last_name" placeholder="Фамилия">
+    <input name="first_name" placeholder="Имя">
+    <select name="role">{% for value, label in roles %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+    <select name="department"><option value="">без отдела</option>
+      {% for d in departments %}<option value="{{ d.pk }}">{{ d }}</option>{% endfor %}</select>
+    <button class="btn">Создать</button>
+  </form>
+  <p class="muted small">Пароль сгенерируется и будет показан один раз — передай его сотруднику.</p>
+</div>
+
+<div class="card table-wrap">
+  <table class="list">
+    <thead><tr><th>Email</th><th>Имя</th><th>Роль</th><th>Отдел</th><th>Статус</th><th></th></tr></thead>
+    <tbody>
+      {% for u in staff %}
+      <tr>
+        <td class="mono">{{ u.email }}</td>
+        <td>{{ u.get_full_name|default:"—" }}</td>
+        <td>{{ u.get_role_display }}</td>
+        <td>{{ u.department|default:"—" }}</td>
+        <td>{% if u.is_active %}работает{% else %}<span class="muted">отключён</span>{% endif %}</td>
+        <td class="right">
+          {% if u.pk != user.pk %}
+          <form method="post" style="display:inline">{% csrf_token %}
+            <input type="hidden" name="action" value="toggle">
+            <input type="hidden" name="id" value="{{ u.pk }}">
+            <button class="btn">{% if u.is_active %}Отключить{% else %}Включить{% endif %}</button>
+          </form>
+          {% endif %}
+          <form method="post" style="display:inline">{% csrf_token %}
+            <input type="hidden" name="action" value="reset_password">
+            <input type="hidden" name="id" value="{{ u.pk }}">
+            <button class="btn">Сбросить пароль</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

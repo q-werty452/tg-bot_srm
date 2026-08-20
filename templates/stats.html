@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Статистика{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Статистика за 30 дней</h1></div>
+
+<div class="tiles">
+  <div class="tile"><span>Обращений за месяц</span><b>{{ tiles.total }}</b></div>
+  <div class="tile"><span>Открыто сейчас</span><b>{{ tiles.open }}</b></div>
+  <div class="tile{% if tiles.overdue %} tile-danger{% endif %}"><span>Просрочено</span><b>{{ tiles.overdue }}</b></div>
+  <div class="tile"><span>Выполнено</span><b>{{ tiles.done }}</b></div>
+  <div class="tile"><span>Ответы «помогло»</span><b>{{ tiles.rating }}</b>
+    <small class="muted">{{ tiles.rated_count }} оценок</small></div>
+</div>
+
+<div class="card">
+  <h2>Обращения по дням (две недели)</h2>
+  <div class="bars-v">
+    {% for d in by_day %}
+    <div class="bar-v" title="{{ d.label }}: {{ d.n }}">
+      <i style="height:{{ d.percent }}%"></i><span>{{ d.label }}</span><b>{{ d.n }}</b>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="ticket-grid">
+  <div class="card">
+    <h2>По темам</h2>
+    {% for r in by_category %}
+    <div class="bar-h"><span>{{ r.label }}</span>
+      <div class="track"><i style="width:{{ r.percent }}%"></i></div><b>{{ r.count }}</b></div>
+    {% empty %}<div class="empty"><p>Пока нет данных.</p></div>{% endfor %}
+  </div>
+  <div class="card">
+    <h2>По районам</h2>
+    {% for r in by_district %}
+    <div class="bar-h"><span>{{ r.label }}</span>
+      <div class="track"><i style="width:{{ r.percent }}%"></i></div><b>{{ r.count }}</b></div>
+    {% empty %}<div class="empty"><p>Пока нет данных.</p></div>{% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <h2>По часам суток</h2>
+  <div class="bars-v bars-hours">
+    {% for h in by_hour %}
+    <div class="bar-v" title="{{ h.label }}:00 — {{ h.n }}">
+      <i style="height:{{ h.percent }}%"></i><span>{{ h.label }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="page-actions">
+  <a class="btn" href="{% url 'export' %}">Скачать все обращения в Excel</a>
+</div>
+{% endblock %}

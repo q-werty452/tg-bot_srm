@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Настройки бота{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Настройки бота</h1>
+  <div class="spacer"></div>
+  {% if health %}
+    {% if health.alive %}<span class="badge st-done">Бот на связи · {{ health.created_at|date:"H:i" }}</span>
+    {% else %}<span class="badge st-rejected">Бот молчит с {{ health.created_at|date:"d.m H:i" }}</span>{% endif %}
+  {% else %}<span class="badge st-waiting">Бот ещё не выходил на связь</span>{% endif %}
+</div>
+
+<div class="ticket-grid">
+  <div>
+    <form method="post" class="card">
+      {% csrf_token %}
+      <h3 style="margin-top:0">Работа бота</h3>
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:8px; font-size:14.5px; color:var(--text)">
+          <input type="checkbox" name="enabled" style="width:auto" {% if s.enabled %}checked{% endif %}>
+          Бот включён и отвечает жителям
+        </label>
+      </div>
+      <div class="field">
+        <label>Текст при выключенном боте (техработы)</label>
+        <input type="text" name="maintenance_text" maxlength="300" value="{{ s.maintenance_text }}">
+      </div>
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:8px; font-size:14.5px; color:var(--text)">
+          <input type="checkbox" name="invent_facts" style="width:auto" {% if s.invent_facts %}checked{% endif %}>
+          Режим показа: разрешать боту додумывать факты
+        </label>
+        <p class="muted small" style="margin:6px 0 0">
+          Включено — бот отвечает конкретно даже там, где точных данных нет (для презентаций).
+          Для настоящих обращений выключите: бот будет опираться только на справочник контактов.
+        </p>
+      </div>
+
+      <hr class="sep">
+      <h3>Тексты (промпты)</h3>
+      <p class="muted small">Пусто — бот использует свои встроенные тексты. Заполните, только если хотите полностью заменить поведение.</p>
+      <div class="field">
+        <label>Развёрнутый режим</label>
+        <textarea name="prompt_detailed" rows="5" placeholder="Встроенный текст бота">{{ s.prompt_detailed }}</textarea>
+      </div>
+      <div class="field">
+        <label>Диалоговый режим</label>
+        <textarea name="prompt_chat" rows="5" placeholder="Встроенный текст бота">{{ s.prompt_chat }}</textarea>
+      </div>
+      <button class="btn">Сохранить настройки</button>
+      <span class="muted small" style="margin-left:10px">Бот подхватит изменения в течение минуты.</span>
+    </form>
+
+    <div class="card" style="margin-top:14px">
+      <h3 style="margin-top:0">Справочник для ответов бота</h3>
+      <p class="muted small">Телефоны, адреса и часы работы, которые бот называет жителям.
+        Ведётся в разделе <a href="{% url 'directory_home' %}">Справочники → Контакты</a>.</p>
+      {% if facts %}<pre style="white-space:pre-wrap; font:inherit; background:var(--bg); padding:12px; border-radius:8px">{{ facts }}</pre>
+      {% else %}<p class="muted small">Пока пусто — бот отвечает без конкретных телефонов и адресов.</p>{% endif %}
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="card">
+      <h3>Состояние</h3>
+      {% if health %}
+        <div class="kv"><span>Последний сигнал</span><span class="mono">{{ health.created_at|date:"d.m.Y H:i:s" }}</span></div>
+        {% for name, ok in health.providers.items %}
+          <div class="kv"><span>{{ name }}</span>
+            {% if ok %}<span class="rating-mark up">работает</span>
+            {% else %}<span class="rating-mark down">недоступен</span>{% endif %}</div>
+        {% endfor %}
+        {% for name, value in health.counters.items %}
+          <div class="kv"><span>{{ name }}</span><span class="mono">{{ value }}</span></div>
+        {% endfor %}
+      {% else %}
+        <p class="muted small">Бот ещё ни разу не выходил на связь с панелью.</p>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h3>Версия конфигурации</h3>
+      <div class="kv"><span>Текущая</span><span class="mono">{{ s.version }}</span></div>
+      <p class="muted small">Растёт при каждом изменении настроек, контактов, готовых ответов и ключей — по ней бот понимает, что пора обновиться.</p>
+    </div>
+  </div>
+</div>
+{% endblock %}

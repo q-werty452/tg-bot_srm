@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Новая заявка{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Новая заявка</h1></div>
+<div class="card" style="max-width:640px">
+  <p class="muted small" style="margin-top:0">
+    Для обращений, поступивших не через бота: житель пришёл лично или позвонил.
+  </p>
+  <form method="post">
+    {% csrf_token %}
+    <div class="field"><label>Имя жителя *</label>
+      <input type="text" name="name" required maxlength="120" value="{{ form.name }}"></div>
+    <div class="field"><label>Телефон</label>
+      <input type="text" name="phone" maxlength="40" value="{{ form.phone }}"></div>
+    <div class="field"><label>Суть обращения *</label>
+      <textarea name="description" required>{{ form.description }}</textarea></div>
+    <div class="field"><label>Заголовок</label>
+      <input type="text" name="title" maxlength="200" value="{{ form.title }}"
+             placeholder="Если пусто — возьмём начало текста"></div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
+      <div class="field"><label>Категория</label>
+        <select name="category"><option value="">—</option>
+          {% for c in categories %}<option value="{{ c.slug }}">{{ c.name }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label>Район</label>
+        <select name="district"><option value="">—</option>
+          {% for d in districts %}<option value="{{ d.slug }}">{{ d.name }}</option>{% endfor %}
+        </select></div>
+    </div>
+    <div class="field"><label>Адрес</label>
+      <input type="text" name="address" maxlength="250" value="{{ form.address }}"></div>
+    <button class="btn">Создать заявку</button>
+  </form>
+</div>
+{% endblock %}

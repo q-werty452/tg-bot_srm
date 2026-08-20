@@ -1,0 +1,46 @@
+{% load static %}
+{% if page.object_list %}
+<table class="list">
+  <thead><tr>
+    <th></th><th>Заявка</th><th>Категория</th><th>Адрес</th><th>Район</th>
+    <th>Статус</th><th>Создана</th><th>Исполнитель</th>
+  </tr></thead>
+  <tbody>
+  {% for t in page.object_list %}
+    <tr>
+      <td style="width:56px">
+        {# Файл может не открыться (повреждён при загрузке, удалён с диска) —
+           тогда вместо значка «сломанная картинка» показываем ту же заглушку,
+           что и у заявок без фото. #}
+        {% if t.preview %}<img class="thumb" src="{{ t.preview.file.url }}" alt="" loading="lazy"
+             onerror="this.onerror=null; this.hidden=true; this.nextElementSibling.hidden=false;">
+        <div class="thumb-empty" hidden><svg class="i"><use href="{% static 'icons.svg' %}#photo"/></svg></div>
+        {% else %}<div class="thumb-empty"><svg class="i"><use href="{% static 'icons.svg' %}#photo"/></svg></div>{% endif %}
+      </td>
+      <td class="title-cell">
+        <span class="num">{% if t.unread %}<span class="dot-unread"></span>{% endif %}#{{ t.number }}</span><br>
+        <a href="{% url 'ticket_detail' t.number %}">{{ t.title|default:"Без темы" }}</a>
+        <small>{{ t.description|truncatechars:60 }}</small>
+      </td>
+      <td>{% if t.category %}
+        <span class="chip" style="background:{{ t.category.color }}1A; color:{{ t.category.color }}">
+          {{ t.category.name }}</span>
+      {% else %}<span class="muted small">—</span>{% endif %}</td>
+      <td class="small">{{ t.address|default:"—" }}</td>
+      <td class="small">{{ t.district.name|default:"—" }}</td>
+      <td>
+        {% if t.is_overdue %}<span class="badge overdue">Просрочена</span>
+        {% else %}<span class="badge st-{{ t.status }}">{{ t.get_status_display }}</span>{% endif %}
+      </td>
+      <td class="small mono">{{ t.created_at|date:"d.m.Y H:i" }}</td>
+      <td class="small">{{ t.executor|default:"—" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">
+  <svg class="i"><use href="{% static 'icons.svg' %}#inbox"/></svg>
+  <p>Обращений пока нет.<br><span class="small">Как только житель напишет боту, заявка появится здесь.</span></p>
+</div>
+{% endif %}

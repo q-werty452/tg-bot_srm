@@ -1,0 +1,35 @@
+{% load static %}<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вход — Мэрия г. Манас</title>
+<link rel="stylesheet" href="{% static 'app.css' %}">
+<link rel="icon" type="image/png" href="{% static 'favicon.png' %}">
+</head>
+<body>
+<div class="login-page">
+  <div class="login-card">
+    <div class="login-logo">
+      <img src="{% static 'logo.png' %}" alt="Манас шаарынын мэриясы">
+      <span>панель обращений жителей</span>
+    </div>
+    {% if form.errors %}
+      <p class="form-error">Неверная почта или пароль. Проверьте и попробуйте ещё раз.</p>
+    {% endif %}
+    <form method="post">
+      {% csrf_token %}
+      <div class="field">
+        <label for="id_username">Рабочая почта</label>
+        <input type="email" name="username" id="id_username" autofocus autocomplete="email" required>
+      </div>
+      <div class="field">
+        <label for="id_password">Пароль</label>
+        <input type="password" name="password" id="id_password" autocomplete="current-password" required>
+      </div>
+      <button class="btn" style="width:100%; justify-content:center">Войти</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>

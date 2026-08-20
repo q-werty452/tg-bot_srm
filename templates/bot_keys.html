@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Ключи и токены{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Ключи и токены</h1></div>
+<p class="muted small" style="margin-top:-8px">
+  Значения хранятся в базе в зашифрованном виде и никогда не показываются целиком.
+  Чтобы заменить ключ — просто введите новый.
+</p>
+
+<div class="ticket-grid">
+  <div>
+    <div class="card">
+      <h3 style="margin-top:0">Ключи моделей ИИ</h3>
+      <table class="list">
+        <thead><tr><th>Провайдер</th><th>Ключ</th><th>Модель</th><th>Проверка</th><th></th></tr></thead>
+        <tbody>
+        {% for row in providers %}
+          <tr>
+            <td><b>{{ row.label }}</b></td>
+            <td class="mono">{{ row.obj.masked|default:"не задан" }}</td>
+            <td class="small">{{ row.obj.model|default:"—" }}</td>
+            <td class="small">
+              {% if row.obj.last_check_ok is None %}<span class="muted">не проверялся</span>
+              {% elif row.obj.last_check_ok %}<span class="rating-mark up">работает · {{ row.obj.last_check_at|date:"d.m H:i" }}</span>
+              {% else %}<span class="rating-mark down">ошибка · {{ row.obj.last_check_at|date:"d.m H:i" }}</span>{% endif %}
+            </td>
+            <td class="right">
+              {% if row.obj.pk %}
+              <form method="post" style="display:inline">{% csrf_token %}
+                <input type="hidden" name="action" value="check"><input type="hidden" name="provider" value="{{ row.name }}">
+                <button class="btn ghost small">Проверить</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+
+      <hr class="sep">
+      <form method="post">
+        {% csrf_token %}<input type="hidden" name="action" value="detect_key">
+        <div class="field">
+          <label>Добавить ключ — провайдер определится сам</label>
+          <input type="password" name="key" autocomplete="off"
+                 placeholder="вставьте ключ целиком" required>
+        </div>
+        <button class="btn">Определить и сохранить</button>
+        <p class="muted small" style="margin:8px 0 0">
+          Панель по очереди спросит у OpenAI, Google и Anthropic, чей это ключ,
+          сразу проверит его и покажет доступные модели. Определять вручную не нужно.
+        </p>
+      </form>
+
+      <details style="margin-top:14px">
+        <summary class="muted small" style="cursor:pointer">Указать провайдера вручную</summary>
+        <form method="post" style="margin-top:10px">
+          {% csrf_token %}<input type="hidden" name="action" value="save_key">
+          <div style="display:grid; grid-template-columns: 160px 1fr; gap:12px">
+            <div class="field"><label>Провайдер</label>
+              <select name="provider">
+                {% for row in providers %}<option value="{{ row.name }}">{{ row.label }}</option>{% endfor %}
+              </select></div>
+            <div class="field"><label>Ключ (заменит прежний)</label>
+              <input type="password" name="key" autocomplete="off" required></div>
+          </div>
+          <button class="btn ghost">Сохранить без проверки</button>
+        </form>
+      </details>
+
+      {% if model_choices %}
+      <hr class="sep">
+      <form method="post">
+        {% csrf_token %}<input type="hidden" name="action" value="set_model">
+        <input type="hidden" name="provider" value="{{ model_choices.provider }}">
+        <div class="field">
+          <label>Модели, доступные ключу {{ model_choices.label }} — выберите рабочую</label>
+          <select name="model">
+            {% for m in model_choices.models %}
+              <option value="{{ m }}" {% if m == model_choices.current %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button class="btn">Использовать эту модель</button>
+      </form>
+      {% endif %}
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3 style="margin-top:0">Провайдер по умолчанию</h3>
+      <form method="post">
+        {% csrf_token %}<input type="hidden" name="action" value="default_provider">
+        <div style="display:flex; gap:10px">
+          <select name="default_provider" style="width:auto">
+            {% for value, label in provider_choices %}
+              <option value="{{ value }}" {% if s.default_provider == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn ghost">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="card">
+      <h3>Telegram-боты</h3>
+      {% for b in bots %}
+        <div class="kv" style="align-items:center">
+          <span>{{ b.name }}{% if b.username %} <span class="muted small">@{{ b.username }}</span>{% endif %}</span>
+          <span>
+            {% if b.is_active %}<span class="badge st-done">активный</span>
+            {% else %}
+            <form method="post" style="display:inline">{% csrf_token %}
+              <input type="hidden" name="action" value="activate_bot"><input type="hidden" name="bot_id" value="{{ b.pk }}">
+              <button class="btn ghost small">Включить</button>
+            </form>
+            {% endif %}
+          </span>
+        </div>
+      {% empty %}
+        <p class="muted small">Токены не заведены — бот работает на токене из своего файла .env.</p>
+      {% endfor %}
+      <hr class="sep">
+      <form method="post">
+        {% csrf_token %}<input type="hidden" name="action" value="add_bot">
+        <div class="field"><label>Название</label>
+          <input type="text" name="name" maxlength="100" placeholder="Основной бот" required></div>
+        <div class="field"><label>Токен от @BotFather</label>
+          <input type="password" name="token" autocomplete="off" placeholder="123456:AA…" required></div>
+        <button class="btn ghost" style="width:100%; justify-content:center">Добавить бота</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

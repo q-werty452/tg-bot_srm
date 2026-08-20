@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Справочники{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Справочники</h1></div>
+
+{# Формы объявлены пустыми в конце страницы, а поля ссылаются на них через
+   атрибут form="…" — потому что <form> внутри <tr> невалиден и браузеры
+   его выбрасывают. #}
+
+<div class="card">
+  <h2>Категории обращений</h2>
+  <div class="table-wrap"><table class="list">
+    <thead><tr><th>Название</th><th>Срок, ч</th><th>Исполнитель по умолчанию</th><th>Действует</th><th></th></tr></thead>
+    <tbody>
+      {% for c in categories %}
+      <tr>
+        <td><input name="name" value="{{ c.name }}" form="cat-{{ c.pk }}"></td>
+        <td><input name="sla_hours" type="number" min="1" value="{{ c.sla_hours }}" style="width:5em" form="cat-{{ c.pk }}"></td>
+        <td><select name="executor" form="cat-{{ c.pk }}"><option value="">—</option>
+          {% for e in executors %}<option value="{{ e.pk }}" {% if c.default_executor_id == e.pk %}selected{% endif %}>{{ e }}</option>{% endfor %}
+        </select></td>
+        <td><input type="checkbox" name="is_active" {% if c.is_active %}checked{% endif %} form="cat-{{ c.pk }}"></td>
+        <td><button class="btn" form="cat-{{ c.pk }}">Сохранить</button></td>
+      </tr>
+      {% endfor %}
+      <tr>
+        <td><input name="name" placeholder="Новая категория" form="cat-add"></td>
+        <td><input name="sla_hours" type="number" min="1" value="72" style="width:5em" form="cat-add"></td>
+        <td><select name="executor" form="cat-add"><option value="">—</option>
+          {% for e in executors %}<option value="{{ e.pk }}">{{ e }}</option>{% endfor %}</select></td>
+        <td></td>
+        <td><button class="btn" form="cat-add">Добавить</button></td>
+      </tr>
+    </tbody>
+  </table></div>
+</div>
+
+<div class="ticket-grid">
+  <div class="card">
+    <h2>Районы</h2>
+    <table class="list"><tbody>
+      {% for d in districts %}
+      <tr>
+        <td {% if not d.is_active %}class="muted"{% endif %}>{{ d.name }}</td>
+        <td class="right">
+          <form method="post">{% csrf_token %}
+            <input type="hidden" name="action" value="toggle_district">
+            <input type="hidden" name="id" value="{{ d.pk }}">
+            <button class="btn">{% if d.is_active %}Выключить{% else %}Включить{% endif %}</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      <tr>
+        <td colspan="2">
+          <form method="post" class="filters">{% csrf_token %}
+            <input type="hidden" name="action" value="add_district">
+            <input name="name" placeholder="Новый район">
+            <button class="btn">Добавить</button>
+          </form>
+        </td>
+      </tr>
+    </tbody></table>
+  </div>
+  <div class="card">
+    <h2>Исполнители (МП)</h2>
+    <table class="list"><tbody>
+      {% for e in executors %}
+      <tr>
+        <td {% if not e.is_active %}class="muted"{% endif %}>{{ e.name }}</td>
+        <td class="right">
+          <form method="post">{% csrf_token %}
+            <input type="hidden" name="action" value="toggle_executor">
+            <input type="hidden" name="id" value="{{ e.pk }}">
+            <button class="btn">{% if e.is_active %}Выключить{% else %}Включить{% endif %}</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      <tr>
+        <td colspan="2">
+          <form method="post" class="filters">{% csrf_token %}
+            <input type="hidden" name="action" value="add_executor">
+            <input name="name" placeholder="Полное название">
+            <input name="short_name" placeholder="Короткое">
+            <button class="btn">Добавить</button>
+          </form>
+        </td>
+      </tr>
+    </tbody></table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Контакты для ответов бота</h2>
+  <p class="muted small mb">Что здесь заполнено — бот считает достоверным и называет жителям:
+  телефоны, адреса, часы работы. Пометка «публичный» обязательна, чтобы бот видел контакт.</p>
+  <div class="table-wrap"><table class="list">
+    <thead><tr><th>Тип</th><th>Название</th><th>Телефон</th><th>Адрес</th><th>Часы</th><th>Тема</th><th>Публичный</th><th></th></tr></thead>
+    <tbody>
+      {% for c in contacts %}
+      <tr>
+        <td>{{ c.get_kind_display }}</td><td>{{ c.title }}</td>
+        <td class="mono">{{ c.phone }}</td><td>{{ c.address }}</td>
+        <td>{{ c.work_hours }}</td><td>{{ c.category|default:"—" }}</td>
+        <td>{% if c.is_public %}да{% else %}<span class="muted">нет</span>{% endif %}</td>
+        <td>
+          <form method="post">{% csrf_token %}
+            <input type="hidden" name="action" value="delete_contact">
+            <input type="hidden" name="id" value="{{ c.pk }}">
+            <button class="btn btn-danger">Удалить</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      <tr>
+        <td><select name="kind" form="contact-add">{% for value, label in contact_kinds %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></td>
+        <td><input name="title" placeholder="Отдел ЖКХ / горячая линия…" form="contact-add"></td>
+        <td><input name="phone" placeholder="(03722) …" form="contact-add"></td>
+        <td><input name="address" placeholder="адрес" form="contact-add"></td>
+        <td><input name="work_hours" placeholder="пн-пт 8:30-17:30" form="contact-add"></td>
+        <td><select name="category" form="contact-add"><option value="">любая</option>
+          {% for c in categories %}<option value="{{ c.pk }}">{{ c.name }}</option>{% endfor %}</select></td>
+        <td><input type="checkbox" name="is_public" checked form="contact-add"></td>
+        <td><button class="btn" form="contact-add">Добавить</button></td>
+      </tr>
+    </tbody>
+  </table></div>
+</div>
+
+{# Сами формы — вне таблиц (см. комментарий вверху). #}
+{% for c in categories %}
+<form id="cat-{{ c.pk }}" method="post">{% csrf_token %}
+  <input type="hidden" name="action" value="save_category">
+  <input type="hidden" name="id" value="{{ c.pk }}">
+</form>
+{% endfor %}
+<form id="cat-add" method="post">{% csrf_token %}
+  <input type="hidden" name="action" value="add_category">
+</form>
+<form id="contact-add" method="post">{% csrf_token %}
+  <input type="hidden" name="action" value="add_contact">
+</form>
+{% endblock %}

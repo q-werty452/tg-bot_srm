@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Журнал{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Журнал действий</h1>
+  <form method="get" class="filters">
+    <input type="search" name="q" value="{{ q }}" placeholder="Поиск по журналу…">
+    <button class="btn">Найти</button>
+  </form>
+</div>
+<div class="card table-wrap">
+  <table class="list">
+    <thead><tr><th>Когда</th><th>Кто</th><th>Действие</th><th>Объект</th><th>Детали</th></tr></thead>
+    <tbody>
+      {% for e in page %}
+      <tr>
+        <td class="mono small">{{ e.created_at|date:"d.m.Y H:i" }}</td>
+        <td>{{ e.user|default:"—" }}</td>
+        <td>{{ e.action }}</td>
+        <td>{{ e.obj }}</td>
+        <td class="muted small">{{ e.summary }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="5"><div class="empty"><p>Записей нет.</p></div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if page.has_other_pages %}
+<div class="pager">
+  {% if page.has_previous %}<a class="btn" href="?q={{ q }}&page={{ page.previous_page_number }}">Назад</a>{% endif %}
+  <span class="muted">стр. {{ page.number }} из {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}<a class="btn" href="?q={{ q }}&page={{ page.next_page_number }}">Вперёд</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

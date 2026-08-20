@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Обращения{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Обращения</h1>
+  <div class="spacer"></div>
+  <a class="btn ghost" href="{% url 'export' %}?{{ request.GET.urlencode }}">
+    <svg class="i"><use href="{% static 'icons.svg' %}#download"/></svg>В Excel</a>
+  <a class="btn" href="{% url 'ticket_new' %}">
+    <svg class="i"><use href="{% static 'icons.svg' %}#plus"/></svg>Создать заявку</a>
+</div>
+
+<div class="tiles" id="tiles">
+  <div class="card tile t-new">
+    <div class="ic"><svg class="i"><use href="{% static 'icons.svg' %}#inbox"/></svg></div>
+    <div><b>{{ stats.new }}</b><span>Новые</span><small>+{{ stats.new_today }} за сегодня</small></div>
+  </div>
+  <div class="card tile t-progress">
+    <div class="ic"><svg class="i"><use href="{% static 'icons.svg' %}#clock"/></svg></div>
+    <div><b>{{ stats.in_progress }}</b><span>В работе</span><small>&nbsp;</small></div>
+  </div>
+  <div class="card tile t-overdue">
+    <div class="ic"><svg class="i"><use href="{% static 'icons.svg' %}#bell"/></svg></div>
+    <div><b>{{ stats.overdue }}</b><span>Просроченные</span><small>&nbsp;</small></div>
+  </div>
+  <div class="card tile t-done">
+    <div class="ic"><svg class="i"><use href="{% static 'icons.svg' %}#check"/></svg></div>
+    <div><b>{{ stats.done }}</b><span>Завершённые</span><small>+{{ stats.done_today }} за сегодня</small></div>
+  </div>
+</div>
+
+<form class="filters" method="get">
+  <div class="search">
+    <svg class="i"><use href="{% static 'icons.svg' %}#search"/></svg>
+    <input type="text" name="q" value="{{ f.q }}" placeholder="Поиск: номер, текст, адрес, житель…">
+  </div>
+  <select name="status" onchange="this.form.submit()">
+    <option value="">Статус: все</option>
+    {% for value, label in statuses %}
+      <option value="{{ value }}" {% if f.status == value %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+    <option value="overdue" {% if f.status == 'overdue' %}selected{% endif %}>Просроченные</option>
+  </select>
+  <select name="category" onchange="this.form.submit()">
+    <option value="">Категория: все</option>
+    {% for c in categories %}
+      <option value="{{ c.slug }}" {% if f.category == c.slug %}selected{% endif %}>{{ c.name }}</option>
+    {% endfor %}
+  </select>
+  <select name="district" onchange="this.form.submit()">
+    <option value="">Район: все</option>
+    {% for d in districts %}
+      <option value="{{ d.slug }}" {% if f.district == d.slug %}selected{% endif %}>{{ d.name }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn ghost">Найти</button>
+  {% if f.q or f.status or f.category or f.district %}
+    <a href="{% url 'dashboard' %}" class="small">Сбросить</a>
+  {% endif %}
+</form>
+
+<div class="table-wrap" id="ticket-table">
+  {% include "partials/ticket_rows.html" %}
+</div>
+
+{% if page.paginator.num_pages > 1 %}
+<div class="pager">
+  {% if page.has_previous %}<a href="?{{ qs }}&page={{ page.previous_page_number }}">‹</a>{% endif %}
+  {% for n in page.paginator.get_elided_page_range %}
+    {% if n == page.number %}<b>{{ n }}</b>
+    {% elif n == page.paginator.ELLIPSIS %}<span>…</span>
+    {% else %}<a href="?{{ qs }}&page={{ n }}">{{ n }}</a>{% endif %}
+  {% endfor %}
+  {% if page.has_next %}<a href="?{{ qs }}&page={{ page.next_page_number }}">›</a>{% endif %}
+  <span class="info">Показано {{ page.object_list|length }} из {{ page.paginator.count }}</span>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* Тихое автообновление раз в 10 секунд: перерисовываются только таблица и
+   плитки, страница не мигает, положение прокрутки и фильтры сохраняются.
+   Пока сотрудник печатает в поиске — не обновляем, чтобы не сбить ввод. */
+setInterval(async () => {
+  if (document.activeElement && document.activeElement.name === "q") return;
+  try {
+    const response = await fetch(location.href, {headers: {"X-Requested-With": "refresh"}});
+    if (!response.ok) return;
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    for (const id of ["ticket-table", "tiles"]) {
+      const fresh = doc.getElementById(id);
+      const current = document.getElementById(id);
+      if (fresh && current && fresh.innerHTML !== current.innerHTML)
+        current.innerHTML = fresh.innerHTML;
+    }
+  } catch (e) { /* сеть моргнула — попробуем в следующий раз */ }
+}, 10000);
+</script>
+{% endblock %}

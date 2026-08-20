@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Рассылки{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Рассылки</h1></div>
+
+<div class="ticket-grid">
+  <div>
+    <div class="table-wrap">
+      {% if items %}
+      <table class="list">
+        <thead><tr><th>Текст</th><th>Кому</th><th>Состояние</th>
+          <th>Отправлено</th><th>Создана</th></tr></thead>
+        <tbody>
+        {% for b in items %}
+          <tr>
+            <td class="title-cell" style="max-width:380px">{{ b.text|truncatechars:90 }}</td>
+            <td class="small">
+              {{ b.get_audience_display }}
+              {% if b.district %}· {{ b.district.name }}{% endif %}
+              {% if b.category %}· {{ b.category.name }}{% endif %}
+            </td>
+            <td>
+              {% if b.status == 'done' %}<span class="badge st-done">Завершена</span>
+              {% elif b.status == 'sending' or b.status == 'queued' %}<span class="badge st-in_progress">Отправляется</span>
+              {% else %}<span class="badge st-waiting">Черновик</span>{% endif %}
+            </td>
+            <td class="small mono">{{ b.sent }} из {{ b.total }}{% if b.failed %} · не дошло {{ b.failed }}{% endif %}</td>
+            <td class="small mono">{{ b.created_at|date:"d.m.Y H:i" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty">
+        <svg class="i"><use href="{% static 'icons.svg' %}#megaphone"/></svg>
+        <p>Рассылок ещё не было.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="card">
+      <h3>Новая рассылка</h3>
+      <form method="post">
+        {% csrf_token %}
+        <div class="field"><label>Текст сообщения</label>
+          <textarea name="text" rows="5" required
+placeholder="Уважаемые жители! Завтра с 9:00 до 18:00…"></textarea></div>
+        <div class="field"><label>Кому</label>
+          <select name="audience" onchange="
+            document.getElementById('aud-district').style.display = this.value === 'district' ? '' : 'none';
+            document.getElementById('aud-category').style.display = this.value === 'category' ? '' : 'none';">
+            <option value="all">Все, кто писал боту</option>
+            <option value="district">Жители района</option>
+            <option value="category">Обращавшиеся по категории</option>
+          </select></div>
+        <div class="field" id="aud-district" style="display:none"><label>Район</label>
+          <select name="district">
+            {% for d in districts %}<option value="{{ d.pk }}">{{ d.name }}</option>{% endfor %}
+          </select></div>
+        <div class="field" id="aud-category" style="display:none"><label>Категория</label>
+          <select name="category">
+            {% for c in categories %}<option value="{{ c.pk }}">{{ c.name }}</option>{% endfor %}
+          </select></div>
+        <p class="muted small">Рассылка не уходит мгновенно: панель ставит сообщения в очередь,
+          бот отправляет их с ограничением скорости Telegram. Заблокировавшие бота пропускаются.
+          Житель может отписаться командой /stop.</p>
+        <button class="btn" style="width:100%; justify-content:center"
+                onclick="return confirm('Отправить рассылку? Отменить её будет нельзя.')">
+          <svg class="i"><use href="{% static 'icons.svg' %}#megaphone"/></svg>Отправить</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Готовые ответы{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Готовые ответы</h1></div>
+<p class="muted small" style="margin-top:-8px">
+  Если сообщение жителя содержит одну из фраз — бот отвечает этим текстом сразу,
+  без обращения к ИИ. Быстро, бесплатно и слово в слово.
+</p>
+
+<div class="ticket-grid">
+  <div>
+    {% for qa in answers %}
+      <div class="card" style="margin-bottom:12px">
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="save">
+          <input type="hidden" name="id" value="{{ qa.pk }}">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px">
+            <div class="field mb0"><label>Фразы-триггеры (по одной на строку)</label>
+              <textarea name="triggers" rows="3" required>{{ qa.triggers }}</textarea></div>
+            <div class="field mb0"><label>Ответ бота</label>
+              <textarea name="answer" rows="3" required>{{ qa.answer }}</textarea></div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:center; margin-top:10px">
+            <button class="btn ghost small">Сохранить</button>
+            <label style="display:flex; align-items:center; gap:6px; margin:0; color:var(--text)">
+              <input type="checkbox" name="is_active" style="width:auto" {% if qa.is_active %}checked{% endif %}> действует
+            </label>
+            <span class="muted small">срабатываний: {{ qa.hits }}</span>
+            <span class="spacer" style="flex:1"></span>
+            <button class="btn ghost small" name="action" value="delete"
+                    onclick="return confirm('Удалить этот готовый ответ?')">
+              <svg class="i"><use href="{% static 'icons.svg' %}#cross"/></svg>Удалить</button>
+          </div>
+        </form>
+      </div>
+    {% empty %}
+      <div class="card"><div class="empty">
+        <svg class="i"><use href="{% static 'icons.svg' %}#chat"/></svg>
+        <p>Готовых ответов пока нет.<br>
+          <span class="small">Начните с графика работы и адреса мэрии — это спрашивают чаще всего.</span></p>
+      </div></div>
+    {% endfor %}
+  </div>
+
+  <div class="side">
+    <div class="card">
+      <h3>Новый готовый ответ</h3>
+      <form method="post">
+        {% csrf_token %}<input type="hidden" name="action" value="save">
+        <div class="field"><label>Фразы-триггеры (по одной на строку)</label>
+          <textarea name="triggers" rows="3" required
+placeholder="график работы&#10;во сколько работает&#10;иш убактысы"></textarea></div>
+        <div class="field"><label>Ответ бота</label>
+          <textarea name="answer" rows="4" required
+placeholder="Мэрия работает по будням с 8:30 до 17:30, обед с 12:00 до 13:00."></textarea></div>
+        <button class="btn" style="width:100%; justify-content:center">Добавить</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
