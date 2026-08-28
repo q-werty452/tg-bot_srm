@@ -42,6 +42,33 @@ class Command(BaseCommand):
         parser.add_argument("--limit", type=int, default=25,
                             help="Сколько адресов обработать за запуск")
 
+    def _ask(self, client, address: str) -> list:
+        """Спросить геокодер, с одной повторной попыткой.
+
+        Первый запрос иногда обрывается на ровном месте — не разогрет DNS,
+        моргнула сеть. Из-за одной такой осечки команда раньше прекращала
+        работу и писала «сеть недоступна», хотя со второго раза всё находилось.
+        """
+        for attempt in (1, 2):
+            try:
+                response = client.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params={
+                        "q": address + CITY_SUFFIX,
+                        "format": "json", "limit": 1,
+                        "countrycodes": "kg",
+                        # Рамка поиска: левый-верхний и правый-нижний углы.
+                        "viewbox": f"{LON_MIN},{LAT_MAX},{LON_MAX},{LAT_MIN}",
+                        "bounded": 1,
+                    },
+                )
+                return response.json() if response.status_code == 200 else []
+            except (httpx.HTTPError, ValueError):
+                if attempt == 2:
+                    raise
+                time.sleep(2)
+        return []
+
     def handle(self, *args, **options):
         tickets = (Ticket.objects.filter(lat__isnull=True)
                    .exclude(address="")[:options["limit"]])
@@ -56,18 +83,7 @@ class Command(BaseCommand):
         ) as client:
             for ticket in tickets:
                 try:
-                    response = client.get(
-                        "https://nominatim.openstreetmap.org/search",
-                        params={
-                            "q": ticket.address + CITY_SUFFIX,
-                            "format": "json", "limit": 1,
-                            "countrycodes": "kg",
-                            # Рамка поиска: левый-верхний и правый-нижний углы.
-                            "viewbox": f"{LON_MIN},{LAT_MAX},{LON_MAX},{LAT_MIN}",
-                            "bounded": 1,
-                        },
-                    )
-                    rows = response.json() if response.status_code == 200 else []
+                    rows = self._ask(client, ticket.address)
                 except (httpx.HTTPError, ValueError):
                     self.stderr.write("Сеть недоступна — попробуй позже.")
                     break
