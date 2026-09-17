@@ -1,9 +1,11 @@
 """Тесты API бота: приём обращений, классификация, история, оценки."""
 
 import tempfile
+from datetime import timedelta
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from directory.models import Category, District
@@ -106,6 +108,36 @@ class IncomingTests(APITestCase):
         self.incoming()
         self.assertEqual(Citizen.objects.get().channel, Channel.TELEGRAM)
         self.assertEqual(Ticket.objects.get().channel, Channel.TELEGRAM)
+
+    def test_stale_open_ticket_closed_and_new_one_started(self):
+        """Житель молчал больше суток — старая тема закрывается, заводится новая."""
+        first = self.incoming(text="Привет").json()
+        Ticket.objects.filter(pk=first["ticket_id"]).update(
+            last_message_at=timezone.now() - timedelta(hours=25))
+
+        second = self.incoming(text="Сломали комп").json()
+        self.assertTrue(second["created"])
+        self.assertNotEqual(first["ticket_id"], second["ticket_id"])
+
+        old = Ticket.objects.get(pk=first["ticket_id"])
+        self.assertEqual(old.status, "done")
+        self.assertTrue(old.events.filter(
+            kind="status", payload__by="inactivity_timeout").exists())
+
+        new = Ticket.objects.get(pk=second["ticket_id"])
+        self.assertEqual(new.title, "Сломали комп")
+        self.assertEqual(Citizen.objects.count(), 1)  # тот же житель, не новый
+
+    def test_open_ticket_within_threshold_is_reused(self):
+        """Меньше суток молчания — тема продолжается в той же заявке."""
+        first = self.incoming(text="Привет").json()
+        Ticket.objects.filter(pk=first["ticket_id"]).update(
+            last_message_at=timezone.now() - timedelta(hours=23))
+
+        second = self.incoming(text="Как дела").json()
+        self.assertFalse(second["created"])
+        self.assertEqual(first["ticket_id"], second["ticket_id"])
+        self.assertEqual(Ticket.objects.get().status, "new")
 
 
 @override_settings(BOT_API_TOKEN=TOKEN, MEDIA_ROOT=MEDIA, STAFF_CHAT_ID="")

@@ -136,10 +136,18 @@ def ticket_detail(request, number: str):
         or Citizen.objects.filter(pk=ticket.citizen_id).whatsapp_window_open().exists()
     )
 
+    # Другие заявки этого же жителя — заголовок текущей заявки хранит только
+    # первую тему разговора, старые обращения так проще найти без поиска.
+    other_tickets = (
+        ticket.citizen.tickets.exclude(pk=ticket.pk)
+        .order_by("-created_at")[:10]
+    )
+
     return render(request, "ticket_detail.html", {
         "section": "dashboard",
         "t": ticket,
         "events": events,
+        "other_tickets": other_tickets,
         "messages_list": ticket.messages.prefetch_related("attachments")
                                         .select_related("staff_user"),
         "statuses": Ticket.Status.choices,
