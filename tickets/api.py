@@ -117,8 +117,9 @@ class IncomingView(BotAPIView):
             )
 
         # Житель ответил в заявку, которая «ждала ответа», — она снова в работе.
-        fields = ["last_message_at", "unread", "updated_at"]
+        fields = ["last_message_at", "last_message_preview", "unread", "updated_at"]
         ticket.last_message_at = timezone.now()
+        ticket.last_message_preview = (text.strip() or "[Вложение]")[:300]
         ticket.unread = True
         if ticket.status == Ticket.Status.WAITING:
             ticket.status = Ticket.Status.IN_PROGRESS
@@ -166,7 +167,8 @@ class AiMessageView(BotAPIView):
             tg_message_id=_int_or_none(request.data.get("tg_message_id")),
         )
         ticket.last_message_at = timezone.now()
-        ticket.save(update_fields=["last_message_at", "updated_at"])
+        ticket.last_message_preview = text[:300]
+        ticket.save(update_fields=["last_message_at", "last_message_preview", "updated_at"])
         return Response({"message_id": message.pk})
 
 

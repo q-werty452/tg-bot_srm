@@ -178,8 +178,9 @@ def ticket_action(request, number: str):
         # Жителю ответ уходит через очередь исходящих — её разбирает бот.
         Outbox.objects.create(chat_id=ticket.citizen.chat_id, text=text,
                               kind=Outbox.Kind.REPLY, ticket=ticket, channel=ticket.channel)
-        fields = ["last_message_at", "updated_at"]
+        fields = ["last_message_at", "last_message_preview", "updated_at"]
         ticket.last_message_at = timezone.now()
+        ticket.last_message_preview = text[:300]
         if ticket.status == Ticket.Status.NEW:
             ticket.status = Ticket.Status.IN_PROGRESS
             fields.append("status")

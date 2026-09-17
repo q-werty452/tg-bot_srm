@@ -55,6 +55,23 @@ class IncomingTests(APITestCase):
         self.assertEqual(Ticket.objects.count(), 1)
         self.assertEqual(Message.objects.count(), 2)
 
+    def test_last_message_preview_tracks_latest_text_not_first(self):
+        self.incoming()
+        ticket = Ticket.objects.get()
+        self.assertEqual(ticket.last_message_preview, "Не вывозят мусор на Токтогула 12")
+        self.incoming(text="Уже неделю не вывозят!")
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.last_message_preview, "Уже неделю не вывозят!")
+        # description (первое сообщение) остаётся прежним
+        self.assertEqual(ticket.description, "Не вывозят мусор на Токтогула 12")
+
+    def test_last_message_preview_for_photo_without_text(self):
+        photo = SimpleUploadedFile("p.jpg", b"JPG", content_type="image/jpeg")
+        self.client.post("/api/v1/tickets/incoming/",
+                         {"tg_user_id": 503, "files": photo},
+                         format="multipart", **HDR)
+        self.assertEqual(Ticket.objects.get().last_message_preview, "[Вложение]")
+
     def test_closed_ticket_spawns_new_one(self):
         first = self.incoming().json()
         Ticket.objects.filter(pk=first["ticket_id"]).update(status="done")
@@ -181,6 +198,7 @@ class DialogueTests(APITestCase):
         self.assertEqual(r.status_code, 200)
         h = self.client.get(f"/api/v1/tickets/{self.ticket_id}/history/", **HDR).json()
         self.assertEqual([m["author"] for m in h["messages"]], ["citizen", "ai"])
+        self.assertEqual(Ticket.objects.get(pk=self.ticket_id).last_message_preview, "Ответ ИИ")
 
     def test_history_limit(self):
         for i in range(5):
@@ -297,3 +315,4 @@ class ClassifyTests(APITestCase):
     def test_unknown_slug_ignored(self):
         r = self.classify(category="nesuschestvuet")
         self.assertNotIn("category", r.json()["applied"])
+

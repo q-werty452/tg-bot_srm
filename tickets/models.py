@@ -137,6 +137,11 @@ class Ticket(models.Model):
     )
     title = models.CharField("заголовок", max_length=200, blank=True)
     description = models.TextField("суть обращения", blank=True)
+    # Текст последнего сообщения (от жителя, ИИ или сотрудника) — для превью
+    # в списке заявок. В отличие от description (текст первого сообщения),
+    # обновляется на каждую новую реплику.
+    last_message_preview = models.CharField("превью последнего сообщения",
+                                            max_length=300, blank=True)
     category = models.ForeignKey(
         "directory.Category", verbose_name="категория", null=True, blank=True,
         on_delete=models.SET_NULL, related_name="tickets",
