@@ -134,21 +134,6 @@ class TicketDetailTests(PagesTestCase):
         self.login()
         self.assertEqual(self.client.get("/tickets/9999-9999/").status_code, 404)
 
-    def test_other_tickets_of_same_citizen_listed(self):
-        self.login()
-        other = Ticket.objects.create(citizen=self.citizen, title="Прошлый вопрос",
-                                      status=Ticket.Status.DONE,
-                                      last_message_at=timezone.now())
-        response = self.client.get(f"/tickets/{self.ticket.number}/")
-        self.assertContains(response, "Другие обращения этого жителя")
-        self.assertContains(response, other.number)
-        self.assertContains(response, "Прошлый вопрос")
-
-    def test_no_other_tickets_block_hidden_when_none(self):
-        self.login()
-        response = self.client.get(f"/tickets/{self.ticket.number}/")
-        self.assertNotContains(response, "Другие обращения этого жителя")
-
     def act(self, **data):
         return self.client.post(f"/tickets/{self.ticket.number}/action/", data)
 

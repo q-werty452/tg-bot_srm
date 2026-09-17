@@ -8,8 +8,6 @@ tickets/api.py — ручки, которыми пользуется Telegram-б
 сюда и превращается в карточку обращения либо дописывается в открытую.
 """
 
-from datetime import timedelta
-
 from django.conf import settings
 from django.utils import timezone
 from rest_framework.response import Response
@@ -18,9 +16,7 @@ from rest_framework.views import APIView
 from botcontrol.authentication import BotTokenAuthentication, IsBot
 from botcontrol.models import Outbox
 from directory.models import Category, District
-from tickets.models import (
-    Attachment, Channel, Citizen, Event, Message, Ticket, TICKET_STALE_HOURS,
-)
+from tickets.models import Attachment, Channel, Citizen, Event, Message, Ticket
 
 
 class BotAPIView(APIView):
@@ -87,19 +83,6 @@ class IncomingView(BotAPIView):
         Citizen.objects.filter(pk=citizen.pk).update(**updates)
 
         ticket = citizen.tickets.open().order_by("-created_at").first()
-        if ticket and ticket.last_message_at and (
-            timezone.now() - ticket.last_message_at
-            > timedelta(hours=TICKET_STALE_HOURS)
-        ):
-            # Житель молчал больше суток и написал заново — вероятно, уже
-            # по другому вопросу. Закрываем старую заявку, заводим новую.
-            stale_ticket = ticket
-            stale_ticket.status = Ticket.Status.DONE
-            stale_ticket.save(update_fields=["status", "updated_at"])
-            Event.objects.create(ticket=stale_ticket, kind="status",
-                                 payload={"to": "done", "by": "inactivity_timeout"})
-            ticket = None
-
         created = ticket is None
         if created:
             ticket = Ticket(

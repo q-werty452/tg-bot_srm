@@ -188,20 +188,6 @@
       {% if t.citizen.username %}<div class="kv"><span>Telegram</span><span>@{{ t.citizen.username }}</span></div>{% endif %}
       {% if t.citizen.phone %}<div class="kv"><span>Телефон</span><span class="mono">{{ t.citizen.phone }}</span></div>{% endif %}
       <div class="kv"><span>Обращений</span><span>{{ t.citizen.tickets.count }}</span></div>
-      {% if other_tickets %}
-      <hr class="sep">
-      <div class="small muted" style="margin-bottom:6px">Другие обращения этого жителя</div>
-      <ul class="events">
-        {% for o in other_tickets %}
-          <li>
-            <a href="{% url 'ticket_detail' o.number %}">#{{ o.number }}</a>
-            {{ o.title|default:"без темы"|truncatechars:40 }}
-            <span class="badge st-{{ o.status }}" style="margin-left:6px">{{ o.get_status_display }}</span>
-            <br><span class="muted">{{ o.created_at|date:"d.m.Y H:i" }}</span>
-          </li>
-        {% endfor %}
-      </ul>
-      {% endif %}
     </div>
 
     <div class="card">
