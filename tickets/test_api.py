@@ -7,7 +7,7 @@ from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from directory.models import Category, District
-from tickets.models import Attachment, Channel, Citizen, Message, Ticket
+from tickets.models import Attachment, Channel, Citizen, Event, Message, Ticket
 
 TOKEN = "test-bot-token-123"
 HDR = {"HTTP_X_BOT_TOKEN": TOKEN}
@@ -315,4 +315,45 @@ class ClassifyTests(APITestCase):
     def test_unknown_slug_ignored(self):
         r = self.classify(category="nesuschestvuet")
         self.assertNotIn("category", r.json()["applied"])
+
+
+@override_settings(BOT_API_TOKEN=TOKEN, MEDIA_ROOT=MEDIA, STAFF_CHAT_ID="")
+class RetitleTests(APITestCase):
+    def setUp(self):
+        r = self.client.post("/api/v1/tickets/incoming/",
+                             {"tg_user_id": 20, "text": "Привет"}, **HDR)
+        self.ticket_id = r.json()["ticket_id"]
+
+    def retitle(self, title):
+        return self.client.post(f"/api/v1/tickets/{self.ticket_id}/retitle/",
+                                {"title": title}, **HDR)
+
+    def test_applies_once(self):
+        r = self.retitle("Сломан лифт в доме 5")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["applied"])
+        ticket = Ticket.objects.get(pk=self.ticket_id)
+        self.assertEqual(ticket.title, "Сломан лифт в доме 5")
+        self.assertTrue(ticket.events.filter(kind="retitled").exists())
+
+    def test_second_call_ignored(self):
+        self.retitle("Первое уточнение")
+        r = self.retitle("Второе уточнение")
+        self.assertFalse(r.json()["applied"])
+        self.assertEqual(Ticket.objects.get(pk=self.ticket_id).title, "Первое уточнение")
+
+    def test_skipped_if_staff_already_edited_title(self):
+        Event.objects.create(ticket_id=self.ticket_id, kind="title", payload={"to": "Ручная правка"})
+        Ticket.objects.filter(pk=self.ticket_id).update(title="Ручная правка")
+        r = self.retitle("Автоматическое уточнение")
+        self.assertFalse(r.json()["applied"])
+        self.assertEqual(Ticket.objects.get(pk=self.ticket_id).title, "Ручная правка")
+
+    def test_empty_title_rejected(self):
+        r = self.retitle("   ")
+        self.assertEqual(r.status_code, 400)
+
+    def test_unknown_ticket_404(self):
+        r = self.client.post("/api/v1/tickets/999999/retitle/", {"title": "х"}, **HDR)
+        self.assertEqual(r.status_code, 404)
 

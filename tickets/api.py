@@ -172,6 +172,32 @@ class AiMessageView(BotAPIView):
         return Response({"message_id": message.pk})
 
 
+class RetitleView(BotAPIView):
+    """
+    POST /api/v1/tickets/<pk>/retitle/ — разовое уточнение темы после разговора.
+
+    Заголовок при создании заявки ставится по первому сообщению («Привет» —
+    и всё), а через несколько минут бот присылает сюда заголовок получше,
+    определённый уже по всей переписке. Срабатывает не больше одного раза
+    на заявку и не трогает заголовок, если сотрудник успел поправить его
+    руками, — обе проверки идут по ленте событий заявки.
+    """
+
+    def post(self, request, pk: int):
+        ticket = Ticket.objects.filter(pk=pk).first()
+        if ticket is None:
+            return Response({"detail": "Заявка не найдена"}, status=404)
+        title = (request.data.get("title") or "").strip()[:200]
+        if not title:
+            return Response({"detail": "Пустой заголовок"}, status=400)
+        if ticket.events.filter(kind__in=("retitled", "title")).exists():
+            return Response({"applied": False})
+        ticket.title = title
+        ticket.save(update_fields=["title", "updated_at"])
+        Event.objects.create(ticket=ticket, kind="retitled", payload={"to": title})
+        return Response({"applied": True})
+
+
 class RatingView(BotAPIView):
     """POST /api/v1/messages/<pk>/rating/ — оценка «помогло / не помогло»."""
 

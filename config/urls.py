@@ -25,7 +25,7 @@ from reports.views import export_xlsx, stats, tickets_map
 from users.views import staff_list
 from tickets.api import (
     AiMessageView, ChatContextView, ClassifyView, CloseByChatView,
-    HistoryView, IncomingView, RatingView, SubscriptionView,
+    HistoryView, IncomingView, RatingView, RetitleView, SubscriptionView,
 )
 from tickets.views import dashboard, ticket_action, ticket_detail, ticket_new
 
@@ -34,6 +34,7 @@ api_v1 = [
     path("tickets/<int:pk>/messages/", AiMessageView.as_view(), name="api-ai-message"),
     path("tickets/<int:pk>/history/", HistoryView.as_view(), name="api-history"),
     path("tickets/<int:pk>/classify/", ClassifyView.as_view(), name="api-classify"),
+    path("tickets/<int:pk>/retitle/", RetitleView.as_view(), name="api-retitle"),
     path("messages/<int:pk>/rating/", RatingView.as_view(), name="api-rating"),
     path("chats/<int:chat_id>/context/", ChatContextView.as_view(), name="api-chat-context"),
     path("chats/<int:chat_id>/close/", CloseByChatView.as_view(), name="api-chat-close"),
