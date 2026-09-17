@@ -20,7 +20,8 @@
         {% else %}<div class="thumb-empty"><svg class="i"><use href="{% static 'icons.svg' %}#photo"/></svg></div>{% endif %}
       </td>
       <td class="title-cell">
-        <span class="num">{% if t.unread %}<span class="dot-unread"></span>{% endif %}#{{ t.number }}</span><br>
+        <span class="num">{% if t.unread %}<span class="dot-unread"></span>{% endif %}#{{ t.number }}</span>
+        <span class="badge chan-{{ t.channel }}">{{ t.get_channel_display }}</span><br>
         <a href="{% url 'ticket_detail' t.number %}">{{ t.title|default:"Без темы" }}</a>
         <small>{{ t.description|truncatechars:60 }}</small>
       </td>

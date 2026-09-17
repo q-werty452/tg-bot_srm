@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from directory.models import Category
-from tickets.models import Citizen, Ticket, TicketCounter
+from tickets.models import Channel, Citizen, Ticket, TicketCounter
 
 
 def make_citizen(uid=1001):
@@ -79,3 +79,35 @@ class DueAndOverdueTests(TestCase):
         overdue = set(Ticket.objects.overdue().values_list("pk", flat=True))
         self.assertEqual(overdue, {t1.pk})
         self.assertIn(t2.pk, set(Ticket.objects.open().values_list("pk", flat=True)))
+
+
+class ChannelTests(TestCase):
+    def test_telegram_and_whatsapp_can_share_numeric_chat_id_value(self):
+        """Уникальность — по (channel, chat_id), не по одному chat_id."""
+        tg = Citizen.objects.create(tg_user_id=700, chat_id=700)
+        wa = Citizen.objects.create(channel=Channel.WHATSAPP, chat_id=700)
+        self.assertNotEqual(tg.pk, wa.pk)
+        self.assertEqual(Citizen.objects.filter(chat_id=700).count(), 2)
+
+    def test_whatsapp_window_open_and_closed(self):
+        fresh = Citizen.objects.create(channel=Channel.WHATSAPP, chat_id=1,
+                                       last_inbound_at=timezone.now())
+        stale = Citizen.objects.create(channel=Channel.WHATSAPP, chat_id=2,
+                                       last_inbound_at=timezone.now() - timedelta(hours=24))
+        never = Citizen.objects.create(channel=Channel.WHATSAPP, chat_id=3)
+
+        open_ids = set(Citizen.objects.whatsapp_window_open().values_list("pk", flat=True))
+        closed_ids = set(Citizen.objects.whatsapp_window_closed().values_list("pk", flat=True))
+        self.assertIn(fresh.pk, open_ids)
+        self.assertIn(stale.pk, closed_ids)
+        self.assertIn(never.pk, closed_ids)
+        self.assertNotIn(fresh.pk, closed_ids)
+
+    def test_telegram_never_excluded_by_window(self):
+        stale_telegram = make_citizen(uid=999)
+        Citizen.objects.filter(pk=stale_telegram.pk).update(
+            last_inbound_at=timezone.now() - timedelta(hours=100))
+        self.assertIn(stale_telegram.pk,
+                      set(Citizen.objects.whatsapp_window_open().values_list("pk", flat=True)))
+        self.assertNotIn(stale_telegram.pk,
+                         set(Citizen.objects.whatsapp_window_closed().values_list("pk", flat=True)))

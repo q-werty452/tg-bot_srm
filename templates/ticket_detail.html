@@ -5,6 +5,7 @@
 <div class="page-head">
   <a href="{% url 'dashboard' %}" class="btn ghost small">← К списку</a>
   <h1>#{{ t.number }}</h1>
+  <span class="badge chan-{{ t.channel }}">{{ t.get_channel_display }}</span>
   {% if t.is_overdue %}<span class="badge overdue">Просрочена</span>
   {% else %}<span class="badge st-{{ t.status }}">{{ t.get_status_display }}</span>{% endif %}
   <div class="spacer"></div>
@@ -58,12 +59,19 @@
       </div>
 
       <div class="reply-box">
+        {% if not whatsapp_window_open %}
+        <p class="small rating-mark down" style="display:block; margin:0 0 8px">
+          Житель не писал в WhatsApp больше 23 часов — свободный ответ не уйдёт
+          (правило Meta). Дождитесь нового сообщения от жителя.
+        </p>
+        {% endif %}
         <form method="post" action="{% url 'ticket_action' t.number %}">
           {% csrf_token %}<input type="hidden" name="action" value="reply">
-          <label>Ответ жителю — уйдёт в Telegram от имени бота</label>
+          <label>Ответ жителю — уйдёт в {% if t.channel == 'whatsapp' %}WhatsApp{% else %}Telegram{% endif %} от имени бота</label>
           <textarea name="text" required placeholder="Напишите ответ…"></textarea>
           <div class="actions">
-            <button class="btn"><svg class="i"><use href="{% static 'icons.svg' %}#send"/></svg>Отправить жителю</button>
+            <button class="btn"{% if not whatsapp_window_open %} disabled{% endif %}>
+              <svg class="i"><use href="{% static 'icons.svg' %}#send"/></svg>Отправить жителю</button>
             <span class="muted small">
               {% if t.answer_mode == 'ai' %}Сейчас в этом чате отвечает ИИ{% else %}Чат перехвачен: ИИ молчит{% endif %}
             </span>

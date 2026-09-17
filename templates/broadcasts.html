@@ -67,6 +67,12 @@ placeholder="Уважаемые жители! Завтра с 9:00 до 18:00…
         <p class="muted small">Рассылка не уходит мгновенно: панель ставит сообщения в очередь,
           бот отправляет их с ограничением скорости Telegram. Заблокировавшие бота пропускаются.
           Житель может отписаться командой /stop.</p>
+        {% if whatsapp_excluded %}
+        <p class="muted small">Из них {{ whatsapp_excluded }} жител{{ whatsapp_excluded|pluralize:"я,ей,ей" }}
+          WhatsApp не получат рассылку: не писали боту больше 23 часов (правило Meta об
+          окне ответа). Оценка приблизительная — для выбранного района или категории
+          получателей может быть меньше.</p>
+        {% endif %}
         <button class="btn" style="width:100%; justify-content:center"
                 onclick="return confirm('Отправить рассылку? Отменить её будет нельзя.')">
           <svg class="i"><use href="{% static 'icons.svg' %}#megaphone"/></svg>Отправить</button>

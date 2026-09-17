@@ -18,7 +18,7 @@ from django.views.decorators.http import require_POST
 from audit.models import log
 from botcontrol.models import Outbox
 from directory.models import Category, District, Executor
-from tickets.models import Citizen, Event, Message, Note, Ticket
+from tickets.models import Channel, Citizen, Event, Message, Note, Ticket
 
 # Человеческие описания событий для ленты в карточке.
 EVENT_TEXTS = {
@@ -61,6 +61,7 @@ def dashboard(request):
         "status": request.GET.get("status", "").strip(),
         "category": request.GET.get("category", "").strip(),
         "district": request.GET.get("district", "").strip(),
+        "channel": request.GET.get("channel", "").strip(),
     }
     if f["q"]:
         qs = qs.filter(
@@ -78,6 +79,8 @@ def dashboard(request):
         qs = qs.filter(category__slug=f["category"])
     if f["district"]:
         qs = qs.filter(district__slug=f["district"])
+    if f["channel"] in Channel.values:
+        qs = qs.filter(channel=f["channel"])
 
     today = timezone.localdate()
     all_tickets = Ticket.objects.all()
@@ -110,6 +113,7 @@ def dashboard(request):
         "statuses": Ticket.Status.choices,
         "categories": Category.objects.filter(is_active=True),
         "districts": District.objects.filter(is_active=True),
+        "channels": Channel.choices,
     })
 
 
@@ -127,6 +131,11 @@ def ticket_detail(request, number: str):
     for event in events:
         event.human = _event_human(event)
 
+    whatsapp_window_open = (
+        ticket.channel != Channel.WHATSAPP
+        or Citizen.objects.filter(pk=ticket.citizen_id).whatsapp_window_open().exists()
+    )
+
     return render(request, "ticket_detail.html", {
         "section": "dashboard",
         "t": ticket,
@@ -138,6 +147,7 @@ def ticket_detail(request, number: str):
         "districts": District.objects.filter(is_active=True),
         "executors": Executor.objects.filter(is_active=True),
         "staff": get_user_model().objects.filter(is_active=True),
+        "whatsapp_window_open": whatsapp_window_open,
     })
 
 
@@ -157,11 +167,17 @@ def ticket_action(request, number: str):
         if not text:
             messages.error(request, "Пустой ответ не отправлен.")
             return redirect("ticket_detail", number=number)
+        if (ticket.channel == Channel.WHATSAPP
+                and not Citizen.objects.filter(pk=ticket.citizen_id).whatsapp_window_open().exists()):
+            messages.error(request, "Нельзя отправить: житель не писал в WhatsApp больше "
+                                    "23 часов — окно ответа закрыто. Дождитесь нового "
+                                    "сообщения от жителя.")
+            return redirect("ticket_detail", number=number)
         Message.objects.create(ticket=ticket, author=Message.Author.STAFF,
                                staff_user=user, text=text)
         # Жителю ответ уходит через очередь исходящих — её разбирает бот.
         Outbox.objects.create(chat_id=ticket.citizen.chat_id, text=text,
-                              kind=Outbox.Kind.REPLY, ticket=ticket)
+                              kind=Outbox.Kind.REPLY, ticket=ticket, channel=ticket.channel)
         fields = ["last_message_at", "updated_at"]
         ticket.last_message_at = timezone.now()
         if ticket.status == Ticket.Status.NEW:
@@ -170,7 +186,8 @@ def ticket_action(request, number: str):
         ticket.save(update_fields=fields)
         event("reply")
         log(user, "ответ жителю", f"#{ticket.number}", text[:120])
-        messages.success(request, "Ответ поставлен в очередь — житель получит его в Telegram.")
+        destination = "WhatsApp" if ticket.channel == Channel.WHATSAPP else "Telegram"
+        messages.success(request, f"Ответ поставлен в очередь — житель получит его в {destination}.")
 
     elif action == "mode":
         mode = request.POST.get("mode")

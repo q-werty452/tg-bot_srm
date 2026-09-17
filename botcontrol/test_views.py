@@ -1,10 +1,12 @@
 """Тесты страниц управления ботом: доступ, настройки, ключи."""
 
+from datetime import timedelta
 from unittest.mock import patch
 
 import httpx
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
 from .models import BotAccount, BotSetting, Broadcast, Outbox, ProviderKey, QuickAnswer
 
@@ -239,4 +241,48 @@ class BroadcastPageTests(BotPagesTestCase):
     def test_operator_cannot_broadcast(self):
         self.as_operator()
         self.client.post("/broadcasts/", {"text": "х", "audience": "all"})
+
+    def test_broadcast_sets_channel_on_outbox_rows(self):
+        self.as_admin()
+        self.client.post("/broadcasts/", {"text": "Отключение воды", "audience": "all"})
+        self.assertEqual(
+            set(Outbox.objects.values_list("channel", flat=True)), {"telegram"})
+
+
+class BroadcastWhatsAppWindowTests(BotPagesTestCase):
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        from tickets.models import Channel, Citizen
+        cls.Channel = Channel
+        cls.telegram_stale = Citizen.objects.create(
+            tg_user_id=10, chat_id=10,
+            last_inbound_at=timezone.now() - timedelta(hours=100))
+        cls.whatsapp_fresh = Citizen.objects.create(
+            channel=Channel.WHATSAPP, chat_id=996700111111,
+            last_inbound_at=timezone.now())
+        cls.whatsapp_stale = Citizen.objects.create(
+            channel=Channel.WHATSAPP, chat_id=996700222222,
+            last_inbound_at=timezone.now() - timedelta(hours=30))
+        cls.whatsapp_never = Citizen.objects.create(
+            channel=Channel.WHATSAPP, chat_id=996700333333)
+
+    def test_broadcast_excludes_whatsapp_outside_window_includes_inside(self):
+        self.as_admin()
+        self.client.post("/broadcasts/", {"text": "Рассылка", "audience": "all"})
+        chats = set(Outbox.objects.values_list("chat_id", flat=True))
+        self.assertIn(self.whatsapp_fresh.chat_id, chats)
+        self.assertNotIn(self.whatsapp_stale.chat_id, chats)
+        self.assertNotIn(self.whatsapp_never.chat_id, chats)
+
+    def test_broadcast_never_excludes_telegram_by_window(self):
+        self.as_admin()
+        self.client.post("/broadcasts/", {"text": "Рассылка", "audience": "all"})
+        chats = set(Outbox.objects.values_list("chat_id", flat=True))
+        self.assertIn(self.telegram_stale.chat_id, chats)
+
+    def test_broadcast_page_shows_excluded_count(self):
+        self.as_admin()
+        response = self.client.get("/broadcasts/")
+        self.assertEqual(response.context["whatsapp_excluded"], 2)  # stale + never
         self.assertFalse(Broadcast.objects.exists())

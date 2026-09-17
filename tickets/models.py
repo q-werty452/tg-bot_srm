@@ -13,16 +13,50 @@ tickets/models.py — обращения жителей.
 Так просрочка всегда честная и не требует фоновой перепроверки таблицы.
 """
 
+from datetime import timedelta
+
 from django.conf import settings
 from django.db import models, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 
-class Citizen(models.Model):
-    """Житель, писавший боту. Ключ — идентификатор аккаунта Telegram."""
+class Channel(models.TextChoices):
+    """Канал, из которого пришло обращение."""
 
-    tg_user_id = models.BigIntegerField("Telegram user id", unique=True)
-    chat_id = models.BigIntegerField("Telegram chat id")
+    TELEGRAM = "telegram", "Telegram"
+    WHATSAPP = "whatsapp", "WhatsApp"
+
+
+# Запас перед 24-часовым окном ответа Meta: если житель не писал в WhatsApp
+# дольше этого срока, свободный ответ уже не уйдёт — только заново открытое
+# окно после нового сообщения от него.
+WHATSAPP_WINDOW_HOURS = 23
+
+
+class CitizenQuerySet(models.QuerySet):
+    def whatsapp_window_open(self):
+        """Кому можно свободно писать в WhatsApp прямо сейчас.
+
+        Telegram этим правилом не ограничен вообще — под условие попадают
+        только каналы WhatsApp с недавним входящим сообщением.
+        """
+        cutoff = timezone.now() - timedelta(hours=WHATSAPP_WINDOW_HOURS)
+        return self.filter(Q(channel=Channel.TELEGRAM) | Q(last_inbound_at__gte=cutoff))
+
+    def whatsapp_window_closed(self):
+        return self.exclude(pk__in=self.whatsapp_window_open())
+
+
+class Citizen(models.Model):
+    """Житель, писавший боту. Ключ — идентификатор аккаунта Telegram или
+    номер телефона в WhatsApp (см. channel)."""
+
+    channel = models.CharField(
+        "канал", max_length=16, choices=Channel.choices, default=Channel.TELEGRAM,
+    )
+    tg_user_id = models.BigIntegerField("Telegram user id", unique=True, null=True, blank=True)
+    chat_id = models.BigIntegerField("chat id / номер телефона")
     first_name = models.CharField("имя", max_length=120, blank=True)
     last_name = models.CharField("фамилия", max_length=120, blank=True)
     username = models.CharField("username", max_length=120, blank=True)
@@ -36,11 +70,21 @@ class Citizen(models.Model):
     is_blocked = models.BooleanField("заблокировал бота", default=False)
     # Согласен ли получать рассылки; /stop в боте снимает флаг.
     subscribed = models.BooleanField("подписан на рассылки", default=True)
+    # Время последнего входящего сообщения — на нём строится проверка
+    # 24-часового окна ответа WhatsApp.
+    last_inbound_at = models.DateTimeField("последнее входящее", null=True, blank=True)
     created_at = models.DateTimeField("впервые написал", auto_now_add=True)
+
+    objects = CitizenQuerySet.as_manager()
 
     class Meta:
         verbose_name = "житель"
         verbose_name_plural = "жители"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["channel", "chat_id"], name="tickets_citizen_unique_channel_chat_id",
+            ),
+        ]
 
     def __str__(self):
         name = f"{self.first_name} {self.last_name}".strip()
@@ -117,6 +161,9 @@ class Ticket(models.Model):
     )
     answer_mode = models.CharField(
         "кто отвечает", max_length=8, choices=AnswerMode.choices, default=AnswerMode.AI,
+    )
+    channel = models.CharField(
+        "канал", max_length=16, choices=Channel.choices, default=Channel.TELEGRAM,
     )
     due_at = models.DateTimeField("срок исполнения", null=True, blank=True)
     unread = models.BooleanField("есть непрочитанное", default=True)

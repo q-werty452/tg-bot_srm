@@ -11,9 +11,9 @@ class MessageInline(admin.TabularInline):
 
 @admin.register(Ticket)
 class TicketAdmin(admin.ModelAdmin):
-    list_display = ["number", "title", "citizen", "category", "district",
+    list_display = ["number", "title", "citizen", "channel", "category", "district",
                     "status", "answer_mode", "created_at"]
-    list_filter = ["status", "category", "district", "answer_mode"]
+    list_filter = ["status", "channel", "category", "district", "answer_mode"]
     search_fields = ["number", "title", "description", "address"]
     readonly_fields = ["number", "created_at", "updated_at", "last_message_at"]
     inlines = [MessageInline]
@@ -21,7 +21,9 @@ class TicketAdmin(admin.ModelAdmin):
 
 @admin.register(Citizen)
 class CitizenAdmin(admin.ModelAdmin):
-    list_display = ["__str__", "tg_user_id", "phone", "district", "is_blocked", "subscribed"]
+    list_display = ["__str__", "channel", "tg_user_id", "chat_id", "phone",
+                    "district", "is_blocked", "subscribed"]
+    list_filter = ["channel", "is_blocked", "subscribed"]
     search_fields = ["first_name", "last_name", "username", "phone"]
 
 

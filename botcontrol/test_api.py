@@ -4,7 +4,7 @@ from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from directory.models import Category, Contact, District
-from tickets.models import Citizen
+from tickets.models import Channel, Citizen
 
 from .models import (
     BotAccount, BotSetting, Broadcast, Heartbeat, Outbox, ProviderKey, QuickAnswer,
@@ -21,7 +21,7 @@ class OutboxTests(APITestCase):
         self.row = Outbox.objects.create(chat_id=42, text="Ответ отдела", kind="reply")
 
     def test_pending_listing_and_sent(self):
-        items = self.client.get("/api/v1/outbox/", **HDR).json()["items"]
+        items = self.client.get("/api/v1/outbox/?channel=telegram", **HDR).json()["items"]
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["text"], "Ответ отдела")
 
@@ -29,7 +29,24 @@ class OutboxTests(APITestCase):
         self.row.refresh_from_db()
         self.assertEqual(self.row.status, "sent")
         self.assertIsNotNone(self.row.sent_at)
-        self.assertEqual(self.client.get("/api/v1/outbox/", **HDR).json()["items"], [])
+        self.assertEqual(
+            self.client.get("/api/v1/outbox/?channel=telegram", **HDR).json()["items"], [])
+
+    def test_outbox_requires_channel_param(self):
+        response = self.client.get("/api/v1/outbox/", **HDR)
+        self.assertEqual(response.status_code, 400)
+        response = self.client.get("/api/v1/outbox/?channel=carrier-pigeon", **HDR)
+        self.assertEqual(response.status_code, 400)
+
+    def test_outbox_filters_by_channel(self):
+        Outbox.objects.create(chat_id=996700123456, text="Здравствуйте",
+                              kind="reply", channel=Channel.WHATSAPP)
+        telegram_items = self.client.get(
+            "/api/v1/outbox/?channel=telegram", **HDR).json()["items"]
+        whatsapp_items = self.client.get(
+            "/api/v1/outbox/?channel=whatsapp", **HDR).json()["items"]
+        self.assertEqual([i["text"] for i in telegram_items], ["Ответ отдела"])
+        self.assertEqual([i["text"] for i in whatsapp_items], ["Здравствуйте"])
 
     def test_failed_with_block_marks_citizen(self):
         self.client.post(f"/api/v1/outbox/{self.row.pk}/failed/",
@@ -39,6 +56,17 @@ class OutboxTests(APITestCase):
         self.assertEqual(self.row.status, "failed")
         self.assertTrue(self.citizen.is_blocked)
         self.assertFalse(self.citizen.subscribed)
+
+    def test_failed_block_does_not_touch_other_channel_same_chat_id(self):
+        """chat_id=42 у Telegram-жителя и у WhatsApp-жителя — разные люди."""
+        whatsapp_citizen = Citizen.objects.create(channel=Channel.WHATSAPP, chat_id=42)
+        row = Outbox.objects.create(chat_id=42, text="x", kind="reply", channel=Channel.WHATSAPP)
+        self.client.post(f"/api/v1/outbox/{row.pk}/failed/",
+                         {"error": "unreachable", "blocked": True}, **HDR)
+        self.citizen.refresh_from_db()
+        whatsapp_citizen.refresh_from_db()
+        self.assertFalse(self.citizen.is_blocked)
+        self.assertTrue(whatsapp_citizen.is_blocked)
 
     def test_broadcast_counters_and_completion(self):
         b = Broadcast.objects.create(text="Отключение воды", status="sending", total=2)

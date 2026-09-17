@@ -34,8 +34,8 @@ class BroadcastAdmin(admin.ModelAdmin):
 
 @admin.register(Outbox)
 class OutboxAdmin(admin.ModelAdmin):
-    list_display = ["kind", "chat_id", "status", "attempts", "created_at", "sent_at"]
-    list_filter = ["kind", "status"]
+    list_display = ["kind", "channel", "chat_id", "status", "attempts", "created_at", "sent_at"]
+    list_filter = ["kind", "channel", "status"]
 
 
 @admin.register(Heartbeat)

@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from directory.models import Category, District
-from tickets.models import Citizen, Message, Ticket
+from tickets.models import Channel, Citizen, Message, Ticket
 
 User = get_user_model()
 
@@ -53,7 +53,9 @@ class ExportTests(ReportsTestCase):
         ws = load_workbook(BytesIO(response.content)).active
         rows = list(ws.values)
         self.assertEqual(rows[0][0], "Номер")
-        self.assertEqual(rows[1][2], "Яма на Ленина")
+        self.assertEqual(rows[0][1], "Канал")
+        self.assertEqual(rows[1][1], "Telegram")
+        self.assertEqual(rows[1][3], "Яма на Ленина")
 
     def test_export_respects_filters(self):
         response = self.client.get("/export/?q=несуществующее")
@@ -61,6 +63,19 @@ class ExportTests(ReportsTestCase):
         from openpyxl import load_workbook
         ws = load_workbook(BytesIO(response.content)).active
         self.assertEqual(len(list(ws.values)), 1, "только заголовок")
+
+    def test_export_filters_by_channel(self):
+        wa_citizen = Citizen.objects.create(channel=Channel.WHATSAPP, chat_id=996700123456)
+        Ticket.objects.create(citizen=wa_citizen, title="WhatsApp-обращение",
+                              channel=Channel.WHATSAPP)
+        from io import BytesIO
+        from openpyxl import load_workbook
+
+        response = self.client.get("/export/?channel=whatsapp")
+        ws = load_workbook(BytesIO(response.content)).active
+        rows = list(ws.values)
+        self.assertEqual(len(rows), 2)  # заголовок + 1 WhatsApp-заявка
+        self.assertEqual(rows[1][3], "WhatsApp-обращение")
 
 
 class MapTests(ReportsTestCase):

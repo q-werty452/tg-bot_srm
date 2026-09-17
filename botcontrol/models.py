@@ -16,6 +16,8 @@ botcontrol/models.py — всё, чем панель управляет бото
 from django.conf import settings as dj_settings
 from django.db import models
 
+from tickets.models import Channel
+
 from .crypto import decrypt, encrypt
 
 
@@ -230,6 +232,9 @@ class Outbox(models.Model):
     chat_id = models.BigIntegerField("chat id получателя")
     text = models.TextField("текст")
     kind = models.CharField("вид", max_length=16, choices=Kind.choices)
+    channel = models.CharField(
+        "канал", max_length=16, choices=Channel.choices, default=Channel.TELEGRAM,
+    )
     ticket = models.ForeignKey("tickets.Ticket", null=True, blank=True,
                                on_delete=models.SET_NULL, related_name="outbox")
     broadcast = models.ForeignKey(Broadcast, null=True, blank=True,

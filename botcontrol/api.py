@@ -14,19 +14,26 @@ from rest_framework.response import Response
 
 from directory.models import Category, Contact, District
 from tickets.api import BotAPIView, _int_or_none
-from tickets.models import Citizen
+from tickets.models import Channel, Citizen
 
 from .crypto import SecretsError
 from .models import BotAccount, BotSetting, Broadcast, Heartbeat, Outbox, ProviderKey, QuickAnswer
 
 
 class OutboxListView(BotAPIView):
-    """GET /api/v1/outbox/?limit=50 — что бот должен отправить в Telegram."""
+    """GET /api/v1/outbox/?channel=telegram&limit=50 — что боту забрать на отправку.
+
+    channel обязателен: у каждого канала свой процесс-отправитель, и им
+    нельзя случайно забрать и отправить чужую строку очереди.
+    """
 
     def get(self, request):
+        channel = (request.query_params.get("channel") or "").strip().lower()
+        if channel not in Channel.values:
+            return Response({"detail": "channel обязателен: telegram или whatsapp"}, status=400)
         limit = min(_int_or_none(request.query_params.get("limit")) or 50, 200)
-        rows = Outbox.objects.filter(status=Outbox.Status.PENDING).order_by(
-            "created_at")[:limit]
+        rows = Outbox.objects.filter(
+            status=Outbox.Status.PENDING, channel=channel).order_by("created_at")[:limit]
         return Response({
             "items": [
                 {"id": r.pk, "chat_id": r.chat_id, "text": r.text, "kind": r.kind}
@@ -83,7 +90,7 @@ class OutboxFailedView(BotAPIView):
             OutboxSentView._finish_if_done(row.broadcast_id)
         if request.data.get("blocked"):
             # Заблокировал бота — и рассылки ему больше не ставим в очередь.
-            Citizen.objects.filter(chat_id=row.chat_id).update(
+            Citizen.objects.filter(chat_id=row.chat_id, channel=row.channel).update(
                 is_blocked=True, subscribed=False)
         return Response({"ok": True})
 

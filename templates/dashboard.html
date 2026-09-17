@@ -54,8 +54,14 @@
       <option value="{{ d.slug }}" {% if f.district == d.slug %}selected{% endif %}>{{ d.name }}</option>
     {% endfor %}
   </select>
+  <select name="channel" onchange="this.form.submit()">
+    <option value="">Канал: все</option>
+    {% for value, label in channels %}
+      <option value="{{ value }}" {% if f.channel == value %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
   <button class="btn ghost">Найти</button>
-  {% if f.q or f.status or f.category or f.district %}
+  {% if f.q or f.status or f.category or f.district or f.channel %}
     <a href="{% url 'dashboard' %}" class="small">Сбросить</a>
   {% endif %}
 </form>

@@ -16,7 +16,7 @@ from rest_framework.views import APIView
 from botcontrol.authentication import BotTokenAuthentication, IsBot
 from botcontrol.models import Outbox
 from directory.models import Category, District
-from tickets.models import Attachment, Citizen, Event, Message, Ticket
+from tickets.models import Attachment, Channel, Citizen, Event, Message, Ticket
 
 
 class BotAPIView(APIView):
@@ -49,21 +49,33 @@ class IncomingView(BotAPIView):
 
     def post(self, request):
         data = request.data
-        tg_user_id = _int_or_none(data.get("tg_user_id"))
-        if tg_user_id is None:
-            return Response({"detail": "tg_user_id обязателен и должен быть числом"}, status=400)
-        chat_id = _int_or_none(data.get("chat_id")) or tg_user_id
+        channel = (data.get("channel") or Channel.TELEGRAM).strip().lower()
+        if channel not in Channel.values:
+            channel = Channel.TELEGRAM
+
+        if channel == Channel.TELEGRAM:
+            tg_user_id = _int_or_none(data.get("tg_user_id"))
+            if tg_user_id is None:
+                return Response({"detail": "tg_user_id обязателен и должен быть числом"}, status=400)
+            chat_id = _int_or_none(data.get("chat_id")) or tg_user_id
+            citizen, _ = Citizen.objects.get_or_create(
+                tg_user_id=tg_user_id, defaults={"chat_id": chat_id, "channel": channel},
+            )
+        else:
+            chat_id = _int_or_none(data.get("chat_id"))
+            if chat_id is None:
+                return Response({"detail": "chat_id (номер телефона) обязателен для WhatsApp"}, status=400)
+            citizen, _ = Citizen.objects.get_or_create(
+                channel=channel, chat_id=chat_id, defaults={"channel": channel, "chat_id": chat_id},
+            )
 
         text = (data.get("text") or "").strip()
         files = request.FILES.getlist("files")
         if not text and not files:
             return Response({"detail": "Пустое обращение: нет ни текста, ни файлов"}, status=400)
 
-        citizen, _ = Citizen.objects.get_or_create(
-            tg_user_id=tg_user_id, defaults={"chat_id": chat_id},
-        )
         # Профиль обновляем каждым сообщением: люди меняют имена и номера.
-        updates = {"chat_id": chat_id}
+        updates = {"chat_id": chat_id, "last_inbound_at": timezone.now()}
         for field in ("first_name", "last_name", "username", "phone"):
             value = (data.get(field) or "").strip()
             if value:
@@ -75,6 +87,7 @@ class IncomingView(BotAPIView):
         if created:
             ticket = Ticket(
                 citizen=citizen,
+                channel=channel,
                 title=(data.get("title") or "").strip()[:200] or text[:60] or "Фото от жителя",
                 description=text,
                 address=(data.get("address") or "").strip()[:250],
@@ -87,7 +100,7 @@ class IncomingView(BotAPIView):
                 ticket.district = District.objects.filter(slug=slug, is_active=True).first()
             ticket.save()
             Event.objects.create(ticket=ticket, kind="created",
-                                 payload={"source": "telegram"})
+                                 payload={"source": channel})
             self._notify_staff(ticket, text)
 
         message = Message.objects.create(
@@ -132,6 +145,7 @@ class IncomingView(BotAPIView):
             chat_id=staff_chat,
             kind=Outbox.Kind.NOTIFY,
             ticket=ticket,
+            channel=Channel.TELEGRAM,  # уведомления сотрудникам — всегда в Telegram
             text=f"Новое обращение #{ticket.number}\nОт: {ticket.citizen}\n{preview}",
         )
 
@@ -257,7 +271,10 @@ class ChatContextView(BotAPIView):
     """
 
     def get(self, request, chat_id: int):
-        citizen = Citizen.objects.filter(chat_id=chat_id).first()
+        channel = (request.query_params.get("channel") or Channel.TELEGRAM).strip().lower()
+        if channel not in Channel.values:
+            channel = Channel.TELEGRAM
+        citizen = Citizen.objects.filter(chat_id=chat_id, channel=channel).first()
         if citizen is None:
             return Response({"detail": "Житель не найден"}, status=404)
         ticket = (citizen.tickets.open().order_by("-created_at").first()
@@ -290,7 +307,10 @@ class CloseByChatView(BotAPIView):
     """
 
     def post(self, request, chat_id: int):
-        citizen = Citizen.objects.filter(chat_id=chat_id).first()
+        channel = (request.data.get("channel") or Channel.TELEGRAM).strip().lower()
+        if channel not in Channel.values:
+            channel = Channel.TELEGRAM
+        citizen = Citizen.objects.filter(chat_id=chat_id, channel=channel).first()
         if citizen is None:
             return Response({"closed": False})
         ticket = citizen.tickets.open().order_by("-created_at").first()
@@ -310,6 +330,9 @@ class SubscriptionView(BotAPIView):
         chat_id = _int_or_none(request.data.get("chat_id"))
         if chat_id is None:
             return Response({"detail": "chat_id обязателен"}, status=400)
+        channel = (request.data.get("channel") or Channel.TELEGRAM).strip().lower()
+        if channel not in Channel.values:
+            channel = Channel.TELEGRAM
         # Значение может прийти и как JSON-булево, и как строка из формы:
         # bool("False") == True, поэтому строки разбираем сами.
         raw = request.data.get("subscribed", True)
@@ -317,5 +340,5 @@ class SubscriptionView(BotAPIView):
             subscribed = raw.strip().lower() not in ("false", "0", "no", "")
         else:
             subscribed = bool(raw)
-        Citizen.objects.filter(chat_id=chat_id).update(subscribed=subscribed)
+        Citizen.objects.filter(chat_id=chat_id, channel=channel).update(subscribed=subscribed)
         return Response({"ok": True})

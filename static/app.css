@@ -210,6 +210,8 @@ table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
 .badge.st-done { background: var(--ok-soft); color: var(--ok); }
 .badge.st-rejected { background: var(--danger-soft); color: var(--danger); }
 .badge.overdue { background: var(--danger); color: #fff; }
+.badge.chan-telegram { background: var(--accent-soft); color: var(--accent); }
+.badge.chan-whatsapp { background: var(--ok-soft); color: var(--ok); }
 .dot-unread {
   width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
   display: inline-block; margin-right: 2px;

@@ -7,7 +7,7 @@ from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from directory.models import Category, District
-from tickets.models import Attachment, Citizen, Message, Ticket
+from tickets.models import Attachment, Channel, Citizen, Message, Ticket
 
 TOKEN = "test-bot-token-123"
 HDR = {"HTTP_X_BOT_TOKEN": TOKEN}
@@ -102,6 +102,47 @@ class IncomingTests(APITestCase):
         self.incoming(text="отвечаю на вопрос")
         self.assertEqual(Ticket.objects.get().status, "in_progress")
 
+    def test_default_channel_is_telegram_when_omitted(self):
+        self.incoming()
+        self.assertEqual(Citizen.objects.get().channel, Channel.TELEGRAM)
+        self.assertEqual(Ticket.objects.get().channel, Channel.TELEGRAM)
+
+
+@override_settings(BOT_API_TOKEN=TOKEN, MEDIA_ROOT=MEDIA, STAFF_CHAT_ID="")
+class IncomingWhatsAppTests(APITestCase):
+    def incoming(self, **extra):
+        data = {"channel": "whatsapp", "chat_id": 996700123456,
+                "first_name": "Айгуль", "text": "Не работает уличный свет"}
+        data.update(extra)
+        return self.client.post("/api/v1/tickets/incoming/", data, **HDR)
+
+    def test_creates_whatsapp_citizen_without_tg_user_id(self):
+        r = self.incoming()
+        self.assertEqual(r.status_code, 200)
+        citizen = Citizen.objects.get()
+        self.assertEqual(citizen.channel, Channel.WHATSAPP)
+        self.assertIsNone(citizen.tg_user_id)
+        self.assertEqual(citizen.chat_id, 996700123456)
+        ticket = Ticket.objects.get(pk=r.json()["ticket_id"])
+        self.assertEqual(ticket.channel, Channel.WHATSAPP)
+
+    def test_missing_chat_id_rejected(self):
+        r = self.incoming(chat_id="")
+        self.assertEqual(r.status_code, 400)
+
+    def test_second_message_updates_last_inbound_at(self):
+        self.incoming()
+        first_seen = Citizen.objects.get().last_inbound_at
+        self.incoming(text="Ещё вопрос")
+        second_seen = Citizen.objects.get().last_inbound_at
+        self.assertGreater(second_seen, first_seen)
+
+    def test_telegram_and_whatsapp_citizen_independent_with_same_chat_id(self):
+        self.incoming(chat_id=7)
+        self.client.post("/api/v1/tickets/incoming/",
+                         {"tg_user_id": 7, "chat_id": 7, "text": "Telegram-сообщение"}, **HDR)
+        self.assertEqual(Citizen.objects.filter(chat_id=7).count(), 2)
+
 
 @override_settings(BOT_API_TOKEN=TOKEN, MEDIA_ROOT=MEDIA,
                    STAFF_CHAT_ID="-100200")
@@ -117,6 +158,14 @@ class NotifyTests(APITestCase):
         self.client.post("/api/v1/tickets/incoming/",
                          {"tg_user_id": 1, "text": "и ещё"}, **HDR)
         self.assertEqual(Outbox.objects.filter(kind="notify").count(), 1)
+
+    def test_staff_notification_always_telegram_even_for_whatsapp_ticket(self):
+        from botcontrol.models import Outbox
+        self.client.post("/api/v1/tickets/incoming/",
+                         {"channel": "whatsapp", "chat_id": 996700123456,
+                          "text": "Прорвало трубу"}, **HDR)
+        row = Outbox.objects.get(kind="notify")
+        self.assertEqual(row.channel, Channel.TELEGRAM)
 
 
 @override_settings(BOT_API_TOKEN=TOKEN, MEDIA_ROOT=MEDIA, STAFF_CHAT_ID="")
@@ -173,6 +222,40 @@ class DialogueTests(APITestCase):
         self.assertEqual(Ticket.objects.get().status, "done")
         again = self.client.post("/api/v1/chats/7/close/", **HDR).json()
         self.assertFalse(again["closed"])
+
+
+@override_settings(BOT_API_TOKEN=TOKEN, MEDIA_ROOT=MEDIA, STAFF_CHAT_ID="")
+class ChannelDisambiguationTests(APITestCase):
+    """Telegram и WhatsApp могут случайно иметь одинаковый числовой chat_id —
+    ручки, которые ищут жителя только по chat_id, обязаны спрашивать канал."""
+
+    def setUp(self):
+        self.tg = self.client.post(
+            "/api/v1/tickets/incoming/",
+            {"tg_user_id": 7, "chat_id": 7, "text": "Telegram-вопрос"}, **HDR).json()
+        self.wa = self.client.post(
+            "/api/v1/tickets/incoming/",
+            {"channel": "whatsapp", "chat_id": 7, "text": "WhatsApp-вопрос"}, **HDR).json()
+
+    def test_chat_context_disambiguates_by_channel(self):
+        tg_ctx = self.client.get("/api/v1/chats/7/context/?channel=telegram", **HDR).json()
+        wa_ctx = self.client.get("/api/v1/chats/7/context/?channel=whatsapp", **HDR).json()
+        self.assertEqual(tg_ctx["ticket_id"], self.tg["ticket_id"])
+        self.assertEqual(wa_ctx["ticket_id"], self.wa["ticket_id"])
+        # без указания канала — по умолчанию Telegram (обратная совместимость)
+        default_ctx = self.client.get("/api/v1/chats/7/context/", **HDR).json()
+        self.assertEqual(default_ctx["ticket_id"], self.tg["ticket_id"])
+
+    def test_close_by_chat_disambiguates_by_channel(self):
+        self.client.post("/api/v1/chats/7/close/", {"channel": "whatsapp"}, **HDR)
+        self.assertEqual(Ticket.objects.get(pk=self.wa["ticket_id"]).status, "done")
+        self.assertEqual(Ticket.objects.get(pk=self.tg["ticket_id"]).status, "new")
+
+    def test_subscription_disambiguates_by_channel(self):
+        self.client.post("/api/v1/citizens/subscription/",
+                         {"chat_id": 7, "channel": "whatsapp", "subscribed": False}, **HDR)
+        self.assertFalse(Citizen.objects.get(channel="whatsapp", chat_id=7).subscribed)
+        self.assertTrue(Citizen.objects.get(channel="telegram", chat_id=7).subscribed)
 
 
 @override_settings(BOT_API_TOKEN=TOKEN, MEDIA_ROOT=MEDIA, STAFF_CHAT_ID="")

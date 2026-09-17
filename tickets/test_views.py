@@ -1,12 +1,14 @@
 """Тесты страниц сотрудников: вход, список, карточка, действия."""
 
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
 
 from botcontrol.models import Outbox
 from directory.models import Category, District, Executor
-from tickets.models import Citizen, Message, Note, Ticket
+from tickets.models import Channel, Citizen, Message, Note, Ticket
 
 User = get_user_model()
 
@@ -83,6 +85,21 @@ class DashboardTests(PagesTestCase):
         response = self.client.get("/?q=" + other.number)
         self.assertContains(response, "Не вывозят мусор")
 
+    def test_channel_filter(self):
+        self.login()
+        wa_citizen = Citizen.objects.create(channel=Channel.WHATSAPP, chat_id=900)
+        wa_ticket = Ticket.objects.create(
+            citizen=wa_citizen, title="WhatsApp-обращение", channel=Channel.WHATSAPP,
+            last_message_at=timezone.now(),
+        )
+        response = self.client.get("/?channel=whatsapp")
+        self.assertContains(response, "WhatsApp-обращение")
+        self.assertNotContains(response, "Яма на дороге")
+
+        response = self.client.get("/?channel=telegram")
+        self.assertContains(response, "Яма на дороге")
+        self.assertNotContains(response, "WhatsApp-обращение")
+
     def test_empty_state(self):
         self.login()
         Ticket.objects.all().delete()
@@ -136,6 +153,39 @@ class TicketDetailTests(PagesTestCase):
         self.login()
         self.act(action="reply", text="   ")
         self.assertFalse(Outbox.objects.exists())
+
+    def _make_whatsapp_ticket(self, last_inbound_at):
+        citizen = Citizen.objects.create(channel=Channel.WHATSAPP, chat_id=996700123456,
+                                         last_inbound_at=last_inbound_at)
+        return Ticket.objects.create(citizen=citizen, title="WhatsApp-обращение",
+                                     channel=Channel.WHATSAPP,
+                                     last_message_at=timezone.now())
+
+    def test_whatsapp_reply_blocked_when_window_closed(self):
+        self.login()
+        ticket = self._make_whatsapp_ticket(timezone.now() - timedelta(hours=24))
+        response = self.client.post(f"/tickets/{ticket.number}/action/",
+                                    {"action": "reply", "text": "Разберёмся"})
+        self.assertRedirects(response, f"/tickets/{ticket.number}/")
+        self.assertFalse(Message.objects.filter(ticket=ticket).exists())
+        self.assertFalse(Outbox.objects.filter(ticket=ticket).exists())
+
+    def test_whatsapp_reply_allowed_when_window_open(self):
+        self.login()
+        ticket = self._make_whatsapp_ticket(timezone.now())
+        response = self.client.post(f"/tickets/{ticket.number}/action/",
+                                    {"action": "reply", "text": "Разберёмся"})
+        self.assertRedirects(response, f"/tickets/{ticket.number}/")
+        self.assertTrue(Message.objects.filter(ticket=ticket, author="staff").exists())
+        row = Outbox.objects.get(ticket=ticket)
+        self.assertEqual(row.channel, Channel.WHATSAPP)
+
+    def test_telegram_reply_never_blocked_by_window(self):
+        """У self.ticket (Telegram) last_inbound_at не задан вовсе — не должно мешать."""
+        self.login()
+        response = self.act(action="reply", text="Бригада выедет завтра.")
+        self.assertRedirects(response, f"/tickets/{self.ticket.number}/")
+        self.assertTrue(Outbox.objects.filter(ticket=self.ticket).exists())
 
     def test_mode_toggle(self):
         self.login()

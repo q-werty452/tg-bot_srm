@@ -16,7 +16,7 @@ from django.shortcuts import render
 from django.utils import timezone
 
 from directory.models import Category, District
-from tickets.models import Message, Ticket
+from tickets.models import Channel, Message, Ticket
 
 
 def _bars(rows, label_key, count_key="n"):
@@ -100,6 +100,9 @@ def _filtered_tickets(request):
         qs = qs.filter(category_id=request.GET["category"])
     if request.GET.get("district", "").isdigit():
         qs = qs.filter(district_id=request.GET["district"])
+    channel = request.GET.get("channel", "")
+    if channel in Channel.values:
+        qs = qs.filter(channel=channel)
     q = request.GET.get("q", "").strip()
     if q:
         qs = qs.filter(Q(number__icontains=q) | Q(title__icontains=q)
@@ -119,7 +122,7 @@ def export_xlsx(request):
     wb = Workbook()
     ws = wb.active
     ws.title = "Обращения"
-    headers = ["Номер", "Создана", "Заголовок", "Категория", "Район", "Адрес",
+    headers = ["Номер", "Канал", "Создана", "Заголовок", "Категория", "Район", "Адрес",
                "Статус", "Просрочена", "Исполнитель", "Ответственный",
                "Житель", "Телефон", "Кто отвечает"]
     ws.append(headers)
@@ -127,6 +130,7 @@ def export_xlsx(request):
     for t in _filtered_tickets(request):
         ws.append([
             t.number,
+            t.get_channel_display(),
             timezone.localtime(t.created_at).strftime("%d.%m.%Y %H:%M"),
             t.title,
             t.category.name if t.category else "",

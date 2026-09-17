@@ -393,11 +393,18 @@ def quick_answers(request):
 # ------------------------------------------------------------- рассылки
 
 def _broadcast_recipients(broadcast):
-    """Кому уходит рассылка: подписанные, не заблокировавшие бота жители."""
-    from tickets.models import Citizen
+    """Кому уходит рассылка: подписанные, не заблокировавшие бота жители.
 
-    qs = Citizen.objects.filter(subscribed=True, is_blocked=False,
-                                tg_user_id__gt=0)  # рукозаведённые (<0) не в Telegram
+    Рукозаведённые жители (Telegram, tg_user_id<0 — карточки без чата)
+    исключены всегда. Жители WhatsApp вне 24-часового окна ответа Meta
+    исключены тоже — свободное сообщение им уже не уйдёт. Telegram этим
+    ограничением не затронут вообще, см. Citizen.whatsapp_window_open().
+    """
+    from tickets.models import Channel, Citizen
+
+    qs = Citizen.objects.filter(subscribed=True, is_blocked=False)
+    qs = qs.exclude(channel=Channel.TELEGRAM, tg_user_id__lt=0)
+    qs = qs.whatsapp_window_open()
     if broadcast.audience == Broadcast.Audience.DISTRICT and broadcast.district_id:
         qs = qs.filter(district_id=broadcast.district_id)
     elif broadcast.audience == Broadcast.Audience.CATEGORY and broadcast.category_id:
@@ -432,7 +439,7 @@ def broadcasts(request):
 
         recipients = list(_broadcast_recipients(broadcast))
         Outbox.objects.bulk_create([
-            Outbox(chat_id=citizen.chat_id, text=text,
+            Outbox(chat_id=citizen.chat_id, text=text, channel=citizen.channel,
                    kind=Outbox.Kind.BROADCAST, broadcast=broadcast)
             for citizen in recipients
         ])
@@ -451,9 +458,16 @@ def broadcasts(request):
                                    "отправлять некому.")
         return redirect("broadcasts")
 
+    from tickets.models import Channel, Citizen
+
+    whatsapp_excluded = Citizen.objects.filter(
+        subscribed=True, is_blocked=False, channel=Channel.WHATSAPP,
+    ).whatsapp_window_closed().count()
+
     return render(request, "broadcasts.html", {
         "section": "broadcasts",
         "items": Broadcast.objects.select_related("district", "category")[:50],
         "districts": District.objects.filter(is_active=True),
         "categories": Category.objects.filter(is_active=True),
+        "whatsapp_excluded": whatsapp_excluded,
     })
