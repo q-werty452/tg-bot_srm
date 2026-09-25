@@ -7,3 +7,5 @@ media/
 staticfiles/
 .vscode/
 .idea/
+*.log
+crm_run.log
