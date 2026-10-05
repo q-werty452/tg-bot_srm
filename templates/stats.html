@@ -1,40 +1,128 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}Статистика{% endblock %}
 {% block content %}
 <div class="page-head"><h1>Статистика за 30 дней</h1></div>
 
 <div class="tiles">
-  <div class="tile"><span>Обращений за месяц</span><b>{{ tiles.total }}</b></div>
-  <div class="tile"><span>Открыто сейчас</span><b>{{ tiles.open }}</b></div>
-  <div class="tile{% if tiles.overdue %} tile-danger{% endif %}"><span>Просрочено</span><b>{{ tiles.overdue }}</b></div>
-  <div class="tile"><span>Выполнено</span><b>{{ tiles.done }}</b></div>
-  <div class="tile"><span>Ответы «помогло»</span><b>{{ tiles.rating }}</b>
-    <small class="muted">{{ tiles.rated_count }} оценок</small></div>
-</div>
-
-<div class="card">
-  <h2>Обращения по дням (две недели)</h2>
-  <div class="bars-v">
-    {% for d in by_day %}
-    <div class="bar-v" title="{{ d.label }}: {{ d.n }}">
-      <i style="height:{{ d.percent }}%"></i><span>{{ d.label }}</span><b>{{ d.n }}</b>
-    </div>
-    {% endfor %}
+  <div class="card tile t-new">
+    <div class="ic"><svg class="i"><use href="{% static 'icons.svg' %}#inbox"/></svg></div>
+    <div><b>{{ tiles.total }}</b><span>Обращений за месяц</span></div>
+  </div>
+  <div class="card tile t-progress">
+    <div class="ic"><svg class="i"><use href="{% static 'icons.svg' %}#clock"/></svg></div>
+    <div><b>{{ tiles.open }}</b><span>Открыто сейчас</span></div>
+  </div>
+  <div class="card tile t-overdue">
+    <div class="ic"><svg class="i"><use href="{% static 'icons.svg' %}#bell"/></svg></div>
+    <div><b>{{ tiles.overdue }}</b><span>Просрочено</span></div>
+  </div>
+  <div class="card tile t-done">
+    <div class="ic"><svg class="i"><use href="{% static 'icons.svg' %}#check"/></svg></div>
+    <div><b>{{ tiles.done }}</b><span>Выполнено</span></div>
   </div>
 </div>
 
+<div class="stats-stack">
+<div class="viz-grid">
+  <div class="card">
+    <h2>Обращения по дням</h2>
+    <div class="viz-head">
+      <b class="viz-num">{{ day_total }}</b>
+      {% if day_delta != None %}
+        <span class="viz-delta {% if day_delta >= 0 %}up{% else %}down{% endif %}">
+          {% if day_delta >= 0 %}+{% endif %}{{ day_delta }}%</span>
+        <span class="muted">к прошлым двум неделям</span>
+      {% endif %}
+    </div>
+    {% if day_chart %}
+    <svg class="line-chart" viewBox="0 0 {{ day_chart.width }} {{ day_chart.height }}" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="dayFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" style="stop-color:var(--accent)" stop-opacity="0.28"/>
+          <stop offset="100%" style="stop-color:var(--accent)" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      {% for y in day_chart.grid %}
+      <line x1="0" y1="{{ y }}" x2="{{ day_chart.width }}" y2="{{ y }}" class="grid-line"/>
+      {% endfor %}
+      <line x1="0" y1="{{ day_chart.baseline }}" x2="{{ day_chart.width }}" y2="{{ day_chart.baseline }}"
+            stroke="var(--border)" stroke-width="1"/>
+      <path d="{{ day_chart.area }}" fill="url(#dayFill)"/>
+      <path d="{{ day_chart.line_path }}" fill="none" stroke="var(--accent)"
+            stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/>
+      {% for d in day_chart.dots %}
+      <circle cx="{{ d.x }}" cy="{{ d.y }}" r="3" fill="#fff" stroke="var(--accent)" stroke-width="2">
+        <title>{{ d.label }}: {{ d.n }}</title>
+      </circle>
+      {% if d.show_label %}
+      <text x="{{ d.x }}" y="{{ d.label_y }}" class="line-label" text-anchor="middle">{{ d.n }}</text>
+      {% endif %}
+      {% endfor %}
+    </svg>
+    <div class="line-axis">
+      {% for d in day_chart.dots %}<span>{{ d.label }}</span>{% endfor %}
+    </div>
+    {% else %}
+    <div class="empty"><p>Пока нет данных.</p></div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Структура обращений по темам</h2>
+    {% if category_donut %}
+    <div class="donut-wrap">
+      <svg class="donut" viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="50" fill="none" stroke="var(--neutral-soft)" stroke-width="16"/>
+        {% for s in category_donut %}
+        <circle cx="60" cy="60" r="50" fill="none" stroke="{{ s.color }}" stroke-width="16"
+                stroke-dasharray="{{ s.dasharray }}" stroke-dashoffset="{{ s.dashoffset }}"
+                stroke-linecap="round" transform="rotate(-90 60 60)">
+          <title>{{ s.label }}: {{ s.count }} ({{ s.percent }}%)</title>
+        </circle>
+        {% endfor %}
+        <text x="60" y="56" text-anchor="middle" class="donut-total-num">{{ category_total }}</text>
+        <text x="60" y="72" text-anchor="middle" class="donut-total-label">обращений</text>
+      </svg>
+      <ul class="donut-legend">
+        {% for s in category_donut %}
+        <li><i style="background:{{ s.color }}"></i><b>{{ s.percent }}%</b> {{ s.label }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% else %}
+    <div class="empty"><p>Пока нет данных.</p></div>
+    {% endif %}
+  </div>
+</div>
+
+{% if rating_percent != None %}
+<div class="card">
+  <h2>Ответы ИИ «помогло»</h2>
+  <div class="gauge">
+    <div class="gauge-track">
+      <i class="gauge-fill {% if rating_percent >= 80 %}ok{% elif rating_percent >= 50 %}warn{% else %}danger{% endif %}"
+         style="width:{{ rating_percent }}%"></i>
+      <i class="gauge-tick" style="left:50%"></i>
+      <i class="gauge-tick" style="left:80%"></i>
+    </div>
+    <div class="gauge-value">{{ rating_percent }}%<small class="muted"> · {{ tiles.rated_count }} оценок</small></div>
+  </div>
+</div>
+{% endif %}
+
 <div class="ticket-grid">
   <div class="card">
-    <h2>По темам</h2>
+    <h2>По темам, топ-10</h2>
     {% for r in by_category %}
-    <div class="bar-h"><span>{{ r.label }}</span>
+    <div class="bar-h" title="{{ r.label }}: {{ r.count }}"><span>{{ r.label }}</span>
       <div class="track"><i style="width:{{ r.percent }}%"></i></div><b>{{ r.count }}</b></div>
     {% empty %}<div class="empty"><p>Пока нет данных.</p></div>{% endfor %}
   </div>
   <div class="card">
-    <h2>По районам</h2>
+    <h2>По районам, топ-10</h2>
     {% for r in by_district %}
-    <div class="bar-h"><span>{{ r.label }}</span>
+    <div class="bar-h" title="{{ r.label }}: {{ r.count }}"><span>{{ r.label }}</span>
       <div class="track"><i style="width:{{ r.percent }}%"></i></div><b>{{ r.count }}</b></div>
     {% empty %}<div class="empty"><p>Пока нет данных.</p></div>{% endfor %}
   </div>
@@ -49,6 +137,7 @@
     </div>
     {% endfor %}
   </div>
+</div>
 </div>
 
 <div class="page-actions">

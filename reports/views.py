@@ -1,12 +1,13 @@
 """
 reports/views.py — статистика, карта и выгрузка в Excel.
 
-Графики статистики — обычные полоски на CSS, без внешних библиотек:
-панель обязана работать без интернета. Единственное исключение — карта:
-ей нужны тайлы OpenStreetMap из сети, о чём страница честно предупреждает.
+Графики статистики — SVG и CSS, без внешних библиотек: панель обязана
+работать без интернета. Единственное исключение — карта: ей нужны тайлы
+OpenStreetMap из сети, о чём страница честно предупреждает.
 """
 
 import json
+import math
 from datetime import timedelta
 
 from django.contrib.auth.decorators import login_required
@@ -17,6 +18,107 @@ from django.utils import timezone
 
 from directory.models import Category, District
 from tickets.models import Channel, Message, Ticket
+
+# Категориальная палитра для графиков (кольцевая диаграмма по темам).
+# Порядок подобран так, что у СОСЕДНИХ цветов достаточная разница и для
+# дальтоников, и для обычного зрения (проверено валидатором contrast/CVD) —
+# менять порядок нельзя, можно только целиком заменить палитру и проверить
+# заново. Цвет закрепляется за категорией по её порядку в списке (id),
+# а не по месту в рейтинге обращений — иначе цвета «прыгали» бы при
+# каждом пересчёте статистики.
+CHART_PALETTE = [
+    "#2a78d6",  # 1 синий
+    "#eb6834",  # 2 оранжевый
+    "#1baf7a",  # 3 бирюзовый
+    "#eda100",  # 4 жёлтый
+    "#e87ba4",  # 5 розовый
+    "#008300",  # 6 зелёный
+    "#4a3aa7",  # 7 фиолетовый
+    "#e34948",  # 8 красный
+]
+
+
+def _donut_segments(rows, r=50, gap=3):
+    """
+    Подготовить дуги кольцевой диаграммы (SVG stroke-dasharray/dashoffset).
+
+    rows — [(color, label, count), ...]; сегменты идут в этом же порядке
+    по кругу, с постоянным зазором между соседними, доля каждого — от
+    суммы count по всем строкам.
+    """
+    total = sum(count for _, _, count in rows)
+    if not total:
+        return []
+    circumference = 2 * math.pi * r
+    segments = []
+    offset = 0.0
+    for color, label, count in rows:
+        if not count:
+            continue
+        length = count / total * circumference
+        dash = max(length - gap, 0)
+        segments.append({
+            "color": color, "label": label, "count": count,
+            "percent": round(count * 100 / total),
+            "dasharray": f"{dash:.2f} {circumference - dash:.2f}",
+            "dashoffset": f"{-offset:.2f}",
+        })
+        offset += length
+    return segments
+
+
+def _smooth_path(coords):
+    """
+    Сгладить ломаную в кривую Безье (метод Catmull-Rom -> кубический
+    Безье). Крайние точки дублируются, чтобы концы кривой не «улетали».
+    """
+    pts = [coords[0]] + coords + [coords[-1]]
+    path = [f"M{coords[0][0]:.1f},{coords[0][1]:.1f}"]
+    for i in range(1, len(pts) - 2):
+        p0, p1, p2, p3 = pts[i - 1], pts[i], pts[i + 1], pts[i + 2]
+        c1x, c1y = p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6
+        c2x, c2y = p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6
+        path.append(f"C{c1x:.1f},{c1y:.1f} {c2x:.1f},{c2y:.1f} {p2[0]:.1f},{p2[1]:.1f}")
+    return " ".join(path)
+
+
+def _line_chart(points, width=560, height=108, pad_x=10, pad_y=13):
+    """
+    Подготовить координаты линейного графика с заливкой под линией.
+
+    points — [(label, n), ...] по порядку оси X. Подписываем не каждую
+    точку (иначе при двух неделях подряд это нечитаемо), а только первую,
+    последнюю и максимум — остальные видны по наведению (title в SVG).
+    Линия сглажена (Catmull-Rom), а не ломаная — визуально спокойнее
+    при дневных колебаниях.
+    """
+    if not points:
+        return None
+    values = [n for _, n in points]
+    top = max(values) or 1
+    max_n = max(values)
+    step = (width - 2 * pad_x) / (len(points) - 1) if len(points) > 1 else 0
+    coords = []
+    for i, (label, n) in enumerate(points):
+        x = pad_x + i * step
+        y = height - pad_y - (n / top) * (height - 2 * pad_y)
+        coords.append((x, y, label, n))
+    baseline = height - pad_y
+    xy_only = [(x, y) for x, y, _, _ in coords]
+    line_path = _smooth_path(xy_only) if len(xy_only) > 1 else \
+        f"M{xy_only[0][0]:.1f},{xy_only[0][1]:.1f}"
+    area = (line_path
+            + f" L{coords[-1][0]:.1f},{baseline:.1f}"
+            + f" L{coords[0][0]:.1f},{baseline:.1f} Z")
+    grid = [round(baseline - frac * (height - 2 * pad_y), 1) for frac in (0.5, 1.0)]
+    dots = [
+        {"x": round(x, 1), "y": round(y, 1), "label_y": round(y - 9, 1),
+         "label": label, "n": n,
+         "show_label": n == max_n or i in (0, len(coords) - 1)}
+        for i, (x, y, label, n) in enumerate(coords)
+    ]
+    return {"width": width, "height": height, "line_path": line_path, "area": area,
+            "dots": dots, "baseline": baseline, "grid": grid}
 
 
 def _bars(rows, label_key, count_key="n"):
@@ -50,16 +152,22 @@ def stats(request):
     total_rated = ratings.count()
     tiles["rating"] = f"{round(up * 100 / total_rated)}%" if total_rated else "—"
     tiles["rated_count"] = total_rated
+    # Шкала «помогло» — 0..100 с порогами, для наглядной полоски-градусника.
+    rating_percent = round(up * 100 / total_rated) if total_rated else None
 
-    # Обращения по дням за две недели.
+    # Обращения по дням за две недели — линейный график с заливкой.
     by_day = []
     for shift in range(13, -1, -1):
         day = (now - timedelta(days=shift)).date()
         n = Ticket.objects.filter(created_at__date=day).count()
         by_day.append({"label": day.strftime("%d.%m"), "n": n})
-    top = max((d["n"] for d in by_day), default=0) or 1
-    for d in by_day:
-        d["percent"] = round(d["n"] * 100 / top)
+    day_chart = _line_chart([(d["label"], d["n"]) for d in by_day])
+    day_total = sum(d["n"] for d in by_day)
+    prev_start = (now - timedelta(days=27)).date()
+    prev_end = (now - timedelta(days=14)).date()
+    prev_total = Ticket.objects.filter(
+        created_at__date__gte=prev_start, created_at__date__lt=prev_end).count()
+    day_delta = round((day_total - prev_total) * 100 / prev_total) if prev_total else None
 
     # По категориям и районам (за месяц).
     by_category = _bars(
@@ -68,6 +176,18 @@ def stats(request):
     by_district = _bars(
         list(tickets.values("district__name").annotate(n=Count("id"))
              .order_by("-n")[:10]), "district__name")
+
+    # Структура обращений по темам — кольцевая диаграмма. Цвет закреплён
+    # за категорией по порядку id (см. CHART_PALETTE), доля — от общего
+    # числа КАТЕГОРИЗИРОВАННЫХ обращений за месяц.
+    cat_counts = dict(
+        tickets.exclude(category=None).values_list("category_id")
+        .annotate(n=Count("id")).values_list("category_id", "n"))
+    categories = list(Category.objects.filter(is_active=True).order_by("id"))
+    category_donut = _donut_segments([
+        (CHART_PALETTE[i % len(CHART_PALETTE)], c.name, cat_counts.get(c.id, 0))
+        for i, c in enumerate(categories)
+    ])
 
     # По часам суток: когда жителям удобно писать. Считаем в Python —
     # это переживёт переезд с SQLite на PostgreSQL без правок.
@@ -82,8 +202,11 @@ def stats(request):
 
     return render(request, "stats.html", {
         "section": "stats", "tiles": tiles, "by_day": by_day,
+        "day_chart": day_chart, "day_total": day_total, "day_delta": day_delta,
+        "rating_percent": rating_percent,
         "by_category": by_category, "by_district": by_district,
-        "by_hour": by_hour,
+        "category_donut": category_donut,
+        "category_total": sum(cat_counts.values()), "by_hour": by_hour,
     })
 
 

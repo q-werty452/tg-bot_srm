@@ -135,7 +135,9 @@ label { font-size: 13px; color: var(--muted); display: block; margin: 0 0 4px; }
 .card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 18px 20px;
+  box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 2px 8px rgba(16,24,40,.05);
 }
+.card h2 { margin: 0 0 14px; font-size: 15px; font-weight: 650; }
 
 /* плитки-счётчики */
 .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
@@ -300,7 +302,7 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
 }
 
 /* --- статистика: полоски без внешних библиотек --------------------------- */
-.bars-v { display: flex; align-items: flex-end; gap: 6px; height: 160px; padding-top: 8px; }
+.bars-v { display: flex; align-items: flex-end; gap: 6px; height: 110px; padding-top: 8px; }
 .bars-v .bar-v { flex: 1; display: flex; flex-direction: column; justify-content: flex-end;
   align-items: center; gap: 4px; min-width: 0; height: 100%; }
 .bars-v .bar-v i { display: block; width: 100%; max-width: 34px; min-height: 2px;
@@ -347,3 +349,46 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
 /* Короткая реплика в переписке не должна схлопываться в узкий столбик:
    без минимальной ширины «Привет» превращается в лесенку из трёх строк. */
 .msg { min-width: 190px; }
+
+/* --- статистика: линейный график, кольцевая диаграмма, шкала ------------- */
+/* Всё на чистом SVG/CSS, без графических библиотек — см. reports/views.py. */
+.viz-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .viz-grid { grid-template-columns: 1fr; } }
+.stats-stack > * + * { margin-top: 16px; }
+
+.viz-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.viz-num { font-size: 30px; font-weight: 700; letter-spacing: -.01em; }
+.viz-delta { font-size: 13px; font-weight: 650; padding: 2px 8px; border-radius: 20px; }
+.viz-delta.up { color: var(--ok); background: var(--ok-soft); }
+.viz-delta.down { color: var(--danger); background: var(--danger-soft); }
+
+.line-chart { width: 100%; height: 108px; display: block; overflow: visible; }
+.grid-line { stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 4; }
+.line-label { font-size: 9.5px; font-weight: 700; fill: var(--text); }
+.line-axis { display: flex; justify-content: space-between; margin-top: 2px; }
+.line-axis span { font-size: 10px; color: var(--muted); }
+.line-axis span:not(:first-child):not(:last-child) { display: none; }
+@media (min-width: 700px) { .line-axis span:nth-child(odd) { display: block; } }
+
+.donut-wrap { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.donut { width: 108px; height: 108px; flex-shrink: 0; }
+.donut circle[stroke-dasharray] { transition: stroke-width .15s; }
+.donut circle[stroke-dasharray]:hover { stroke-width: 19; cursor: default; }
+.donut-total-num { font-size: 21px; font-weight: 700; fill: var(--text); }
+.donut-total-label { font-size: 8.5px; fill: var(--muted); }
+.donut-legend { list-style: none; margin: 0; padding: 0; font-size: 13px;
+  display: flex; flex-direction: column; gap: 9px; flex: 1; min-width: 160px; }
+.donut-legend li { display: flex; align-items: center; gap: 9px; color: var(--muted); }
+.donut-legend b { color: var(--text); min-width: 34px; }
+.donut-legend i { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+.gauge { display: flex; align-items: center; gap: 16px; }
+.gauge-track { position: relative; flex: 1; height: 10px; border-radius: 6px;
+  background: var(--neutral-soft); }
+.gauge-fill { position: absolute; inset: 0 auto 0 0; height: 100%; border-radius: 6px;
+  transition: width .2s; }
+.gauge-fill.ok { background: var(--ok); }
+.gauge-fill.warn { background: var(--warn); }
+.gauge-fill.danger { background: var(--danger); }
+.gauge-tick { position: absolute; top: -3px; width: 2px; height: 16px; background: var(--surface); }
+.gauge-value { font-size: 18px; font-weight: 650; white-space: nowrap; }
