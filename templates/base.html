@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Панель{% endblock %} — Мэрия г. Манас</title>
+<title>{% block title %}Панель{% endblock %} — Джалал-Абадская область</title>
 <link rel="stylesheet" href="{% static 'app.css' %}">
 <link rel="icon" type="image/png" href="{% static 'favicon.png' %}">
 </head>
@@ -11,20 +11,14 @@
 <div class="layout">
   <aside class="sidebar">
     <a class="brand" href="{% url 'dashboard' %}">
-      <img src="{% static 'logo.png' %}" alt="Мэрия города Манас">
+      <img src="{% static 'logo.png' %}" alt="Аппарат полномочного представителя Президента КР по Джалал-Абадской области">
       <span>панель обращений</span>
     </a>
     <nav class="nav">
       <a href="{% url 'dashboard' %}" class="{% if section == 'dashboard' %}active{% endif %}">
         <svg class="i"><use href="{% static 'icons.svg' %}#grid"/></svg>Обращения</a>
-      <a href="{% url 'ticket_new' %}" class="{% if section == 'ticket_new' %}active{% endif %}">
-        <svg class="i"><use href="{% static 'icons.svg' %}#plus"/></svg>Новая заявка</a>
       {% if user.is_admin %}
       <div class="sep">Бот</div>
-      <a href="{% url 'bot_settings' %}" class="{% if section == 'bot_settings' %}active{% endif %}">
-        <svg class="i"><use href="{% static 'icons.svg' %}#bot"/></svg>Настройки бота</a>
-      <a href="{% url 'bot_keys' %}" class="{% if section == 'bot_keys' %}active{% endif %}">
-        <svg class="i"><use href="{% static 'icons.svg' %}#key"/></svg>Ключи и токены</a>
       <a href="{% url 'quick_answers' %}" class="{% if section == 'quick_answers' %}active{% endif %}">
         <svg class="i"><use href="{% static 'icons.svg' %}#chat"/></svg>Готовые ответы</a>
       <a href="{% url 'broadcasts' %}" class="{% if section == 'broadcasts' %}active{% endif %}">
@@ -37,8 +31,6 @@
         <svg class="i"><use href="{% static 'icons.svg' %}#pin"/></svg>Карта</a>
       {% if user.is_admin %}
       <div class="sep">Администрирование</div>
-      <a href="{% url 'directory_home' %}" class="{% if section == 'directory' %}active{% endif %}">
-        <svg class="i"><use href="{% static 'icons.svg' %}#book"/></svg>Справочники</a>
       <a href="{% url 'staff_list' %}" class="{% if section == 'staff' %}active{% endif %}">
         <svg class="i"><use href="{% static 'icons.svg' %}#people"/></svg>Сотрудники</a>
       <a href="{% url 'audit_log' %}" class="{% if section == 'audit' %}active{% endif %}">
