@@ -14,24 +14,25 @@ from django.core.management.base import BaseCommand
 
 from tickets.models import Ticket
 
-# Подсказка геокодеру, где искать: без города он найдёт улицу где угодно.
-CITY_SUFFIX = ", Джалал-Абад, Кыргызстан"
+# Подсказка геокодеру, где искать: без региона он найдёт улицу где угодно.
+# Раньше здесь стоял город Джалал-Абад — годилось, пока бот обслуживал
+# только его. Теперь аппарат ведёт всю область, и адреса приходят из
+# райцентров и сёл по всей области («Кашка-Терек» и т.п.), а не только
+# из областного центра — суффикс и рамку расширили до области целиком.
+REGION_SUFFIX = ", Джалал-Абадская область, Кыргызстан"
 MARK_FAILED = -1000.0  # lat=MARK_FAILED значит «пробовали, не нашлось»
 
-# Границы города. Нужны дважды, и оба раза по делу:
-#   1) передаём геокодеру как рамку поиска (viewbox + bounded);
-#   2) проверяем результат сами — рамку сервис иногда игнорирует.
-# Без этой проверки «ул. Ленина» находилась за сотню километров от Манаса,
-# и заявка вставала на карте в чужом районе. Пустая карта лучше, чем врущая.
-CITY_LAT, CITY_LON = 40.9333, 72.9833
-HALF_SIDE = 0.20  # примерно 20 км в каждую сторону
-
-LAT_MIN, LAT_MAX = CITY_LAT - HALF_SIDE, CITY_LAT + HALF_SIDE
-LON_MIN, LON_MAX = CITY_LON - HALF_SIDE, CITY_LON + HALF_SIDE
+# Границы Джалал-Абадской области (с запасом). Нужны дважды, и оба раза
+# по делу: 1) передаём геокодеру как рамку поиска (viewbox + bounded);
+# 2) проверяем результат сами — рамку сервис иногда игнорирует.
+# Без этой проверки адрес мог найтись в другой области или в Узбекистане,
+# и заявка вставала на карте не там. Пустая карта лучше, чем врущая.
+LAT_MIN, LAT_MAX = 40.0, 42.6
+LON_MIN, LON_MAX = 70.8, 74.6
 
 
-def inside_city(lat: float, lon: float) -> bool:
-    """Точка попала в окрестности города?"""
+def inside_region(lat: float, lon: float) -> bool:
+    """Точка попала в границы области?"""
     return LAT_MIN <= lat <= LAT_MAX and LON_MIN <= lon <= LON_MAX
 
 
@@ -54,7 +55,7 @@ class Command(BaseCommand):
                 response = client.get(
                     "https://nominatim.openstreetmap.org/search",
                     params={
-                        "q": address + CITY_SUFFIX,
+                        "q": address + REGION_SUFFIX,
                         "format": "json", "limit": 1,
                         "countrycodes": "kg",
                         # Рамка поиска: левый-верхний и правый-нижний углы.
@@ -90,11 +91,11 @@ class Command(BaseCommand):
                 lat = lon = None
                 if rows:
                     lat, lon = float(rows[0]["lat"]), float(rows[0]["lon"])
-                    if not inside_city(lat, lon):
-                        # Нашлось, но не в нашем городе — доверять нельзя.
+                    if not inside_region(lat, lon):
+                        # Нашлось, но не в нашей области — доверять нельзя.
                         self.stdout.write(
                             f"  {ticket.number}: «{ticket.address}» нашлось за "
-                            f"пределами города ({lat:.3f}, {lon:.3f}) — пропускаю")
+                            f"пределами области ({lat:.3f}, {lon:.3f}) — пропускаю")
                         lat = lon = None
 
                 if lat is not None:

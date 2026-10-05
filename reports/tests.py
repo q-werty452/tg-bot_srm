@@ -97,28 +97,28 @@ class MapTests(ReportsTestCase):
 
 class GeocodeBoundsTests(TestCase):
     """
-    Проверка рамки города. Без неё геокодер находил «ул. Ленина» за сотню
-    километров от Манаса, и заявка вставала на карте в чужом районе.
+    Проверка рамки области. Раньше рамка была размером с город Джалал-Абад,
+    и адрес из другого райцентра той же области (например, Таш-Кумыра)
+    отбрасывался как «слишком далеко». Теперь аппарат ведёт всю область —
+    рамка должна принимать любую точку внутри неё и отбрасывать только то,
+    что объективно за её пределами.
     """
 
-    def test_city_points_accepted(self):
-        from reports.management.commands.geocode import inside_city
-        self.assertTrue(inside_city(40.9333, 72.9833))   # центр города
-        self.assertTrue(inside_city(40.92368, 73.00326))  # ул. Токтогула
+    def test_region_points_accepted(self):
+        from reports.management.commands.geocode import inside_region
+        self.assertTrue(inside_region(40.9333, 72.9833))    # Джалал-Абад (центр)
+        self.assertTrue(inside_region(41.34717, 72.22169))  # Таш-Кумыр, та же область
 
     def test_far_points_rejected(self):
-        from reports.management.commands.geocode import inside_city
-        self.assertFalse(inside_city(41.34717, 72.22169),  # была такая ошибка
-                         "точка за сотню километров не должна попадать на карту")
-        self.assertFalse(inside_city(42.87, 74.59))        # Бишкек
-        self.assertFalse(inside_city(0, 0))                # пустой ответ сервиса
+        from reports.management.commands.geocode import inside_region
+        self.assertFalse(inside_region(42.87, 74.59))        # Бишкек
+        self.assertFalse(inside_region(41.2995, 69.2401))    # Ташкент, другая страна
+        self.assertFalse(inside_region(0, 0))                # пустой ответ сервиса
 
     def test_bounds_are_sane(self):
-        from reports.management.commands.geocode import (
-            CITY_LAT, CITY_LON, LAT_MAX, LAT_MIN, LON_MAX, LON_MIN)
-        self.assertTrue(LAT_MIN < CITY_LAT < LAT_MAX)
-        self.assertTrue(LON_MIN < CITY_LON < LON_MAX)
-        self.assertLess(LAT_MAX - LAT_MIN, 1.0, "рамка не должна быть на пол-страны")
+        from reports.management.commands.geocode import LAT_MAX, LAT_MIN, LON_MAX, LON_MIN
+        self.assertLess(LAT_MAX - LAT_MIN, 3.5, "рамка не должна быть на пол-страны")
+        self.assertLess(LON_MAX - LON_MIN, 4.5, "рамка не должна быть на пол-страны")
 
 
 class TemplateHygieneTests(TestCase):
