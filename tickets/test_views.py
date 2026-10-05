@@ -109,14 +109,14 @@ class DashboardTests(PagesTestCase):
     def test_operator_has_no_admin_nav(self):
         self.login()
         response = self.client.get("/")
-        self.assertNotContains(response, "Ключи и токены")
+        self.assertNotContains(response, "Журнал")
 
     def test_admin_sees_admin_nav(self):
         User.objects.create_user(email="adm@meriya.kg", password="pass12345",
                                  role="admin")
         self.client.login(email="adm@meriya.kg", password="pass12345")
         response = self.client.get("/")
-        self.assertContains(response, "Ключи и токены")
+        self.assertContains(response, "Журнал")
 
 
 class TicketDetailTests(PagesTestCase):
