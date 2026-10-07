@@ -12,13 +12,15 @@ class CategoryAdmin(admin.ModelAdmin):
 
 @admin.register(District)
 class DistrictAdmin(admin.ModelAdmin):
-    list_display = ["name", "slug", "is_active"]
+    list_display = ["name", "slug", "kind", "is_active"]
     prepopulated_fields = {"slug": ["name"]}
 
 
 @admin.register(Executor)
 class ExecutorAdmin(admin.ModelAdmin):
-    list_display = ["name", "short_name", "is_active"]
+    list_display = ["name", "short_name", "territory", "is_active"]
+    list_filter = ["is_active"]
+    search_fields = ["name", "short_name", "territory", "external_id"]
 
 
 @admin.register(Contact)

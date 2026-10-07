@@ -69,7 +69,8 @@
     <table class="list"><tbody>
       {% for e in executors %}
       <tr>
-        <td {% if not e.is_active %}class="muted"{% endif %}>{{ e.name }}</td>
+        <td {% if not e.is_active %}class="muted"{% endif %}>{{ e.name }}
+          {% if e.territory %}<small class="muted">· {{ e.territory }}</small>{% endif %}</td>
         <td class="right">
           <form method="post">{% csrf_token %}
             <input type="hidden" name="action" value="toggle_executor">

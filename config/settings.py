@@ -5,6 +5,7 @@
 .env рядом с manage.py — его нет в git. Всё остальное задано здесь.
 """
 
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -40,6 +41,20 @@ SECRETS_KEY = ENV.get("SECRETS_KEY", "")
 # Служебный чат Telegram для уведомлений о новых обращениях (id группы).
 # Пусто — уведомления не создаются.
 STAFF_CHAT_ID = ENV.get("STAFF_CHAT_ID", "")
+
+# Идёт ли сейчас прогон тестов (python manage.py test). Нужен, чтобы тесты
+# никогда не ходили в сеть: см. GEOCODE_ENABLED ниже.
+TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
+
+# Автоматическое определение точки на карте по адресу из переписки
+# (reports/geocoding.py, ходит в бесплатный Nominatim из фонового потока).
+# Выключается строкой GEOCODE_ENABLED=0 в .env. В тестах выключено всегда,
+# независимо от .env: сеть в тестах запрещена, а заявки там создаются
+# с адресами на каждом шагу.
+GEOCODE_ENABLED = (
+    not TESTING
+    and ENV.get("GEOCODE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+)
 
 
 # --------------------------------------------------------------- приложения

@@ -250,3 +250,115 @@ class TicketNewTests(PagesTestCase):
         self.login()
         self.client.post("/tickets/new/", {"name": "", "description": ""})
         self.assertEqual(Ticket.objects.count(), 1)
+
+
+class EnrichedListTests(PagesTestCase):
+    """Новые колонки списка, фильтр по типу и расширенный поиск."""
+
+    def setUp(self):
+        self.login()
+        Citizen.objects.filter(pk=self.citizen.pk).update(
+            first_name="Айбек", last_name="Иванов", middle_name="Маратович",
+            phone="+996700111222", name_confirmed=True)
+        Ticket.objects.filter(pk=self.ticket.pk).update(
+            district=self.district, settlement="Кашка-Терек", address="ул. Ленина 5",
+            kind=Ticket.Kind.APPEAL)
+
+    def test_applicant_column_shows_full_name_and_phone(self):
+        response = self.client.get("/")
+        self.assertContains(response, "<th>Заявитель</th>", html=True)
+        self.assertContains(response, "Иванов Айбек Маратович")
+        self.assertContains(response, "+996700111222")
+
+    def test_applicant_falls_back_to_nick(self):
+        Citizen.objects.filter(pk=self.citizen.pk).update(
+            first_name="", last_name="", middle_name="", username="bek77")
+        self.assertContains(self.client.get("/"), "@bek77")
+
+    def test_place_column_joins_district_settlement_address(self):
+        response = self.client.get("/")
+        self.assertContains(response, "<th>Место</th>", html=True)
+        text = " ".join(response.content.decode().split())
+        self.assertIn("Центр · Кашка-Терек · ул. Ленина 5", text)
+
+    def test_place_column_dash_when_empty(self):
+        Ticket.objects.filter(pk=self.ticket.pk).update(
+            district=None, settlement="", address="")
+        text = " ".join(self.client.get("/").content.decode().split())
+        self.assertIn('<td class="small"> — </td>', text)
+
+    def test_kind_badge_shown_only_when_set(self):
+        self.assertContains(self.client.get("/"), 'badge kind-appeal">Обращение/жалоба')
+        Ticket.objects.filter(pk=self.ticket.pk).update(kind="")
+        self.assertNotContains(self.client.get("/"), "badge kind-")
+
+    def test_kind_filter(self):
+        Ticket.objects.create(citizen=self.citizen, title="Где мэрия?",
+                              kind=Ticket.Kind.QUESTION, last_message_at=timezone.now())
+        response = self.client.get("/?kind=question")
+        self.assertContains(response, "Где мэрия?")
+        self.assertNotContains(response, "Яма на дороге")
+        response = self.client.get("/?kind=appeal")
+        self.assertContains(response, "Яма на дороге")
+        self.assertNotContains(response, "Где мэрия?")
+        # неизвестное значение фильтр игнорирует
+        self.assertContains(self.client.get("/?kind=nope"), "Где мэрия?")
+        self.assertContains(self.client.get("/"), 'name="kind"')
+
+    def test_search_by_middle_name_phone_and_settlement(self):
+        for query in ("Маратович", "111222", "Кашка"):
+            self.assertContains(self.client.get("/?q=" + query), "Яма на дороге", msg_prefix=query)
+        self.assertNotContains(self.client.get("/?q=Несуществующий"), "Яма на дороге")
+
+
+class EnrichedDetailTests(PagesTestCase):
+    def act(self, **data):
+        return self.client.post(f"/tickets/{self.ticket.number}/action/", data)
+
+    def test_detail_shows_middle_name_settlement_and_kind(self):
+        self.login()
+        Citizen.objects.filter(pk=self.citizen.pk).update(
+            last_name="Иванов", middle_name="Маратович", name_confirmed=True)
+        Ticket.objects.filter(pk=self.ticket.pk).update(
+            settlement="Кашка-Терек", kind=Ticket.Kind.QUESTION)
+        response = self.client.get(f"/tickets/{self.ticket.number}/")
+        self.assertContains(response, "Иванов Айбек Маратович")
+        self.assertContains(response, "Маратович")
+        self.assertContains(response, 'value="Кашка-Терек"')
+        self.assertContains(response, '<option value="question" selected>')
+
+    def test_edit_settlement(self):
+        self.login()
+        self.act(action="settlement", settlement="  Кок-Жангак ")
+        self.ticket.refresh_from_db()
+        self.assertEqual(self.ticket.settlement, "Кок-Жангак")
+        self.assertTrue(self.ticket.events.filter(kind="settlement", user=self.user).exists())
+
+    def test_edit_kind_creates_staff_event_and_validates(self):
+        self.login()
+        self.act(action="kind", kind="other")
+        self.ticket.refresh_from_db()
+        self.assertEqual(self.ticket.kind, "other")
+        self.assertTrue(self.ticket.events.filter(kind="kind", user=self.user).exists())
+        self.act(action="kind", kind="мусор")
+        self.ticket.refresh_from_db()
+        self.assertEqual(self.ticket.kind, "other")
+        self.act(action="kind", kind="")  # можно и сбросить
+        self.ticket.refresh_from_db()
+        self.assertEqual(self.ticket.kind, "")
+
+    def test_executor_select_grouped_by_territory_and_sorted(self):
+        Executor.objects.create(name="Яблоко", territory="Сузак (район)", external_id="o1")
+        Executor.objects.create(name="Арбуз", territory="Сузак (район)", external_id="o2")
+        Executor.objects.create(name="Дыня", territory="г. Манас", external_id="o3")
+        Executor.objects.create(name="Выключен", territory="г. Манас",
+                                external_id="o4", is_active=False)
+        self.login()
+        html = self.client.get(f"/tickets/{self.ticket.number}/").content.decode()
+        self.assertIn('<optgroup label="Сузак (район)">', html)
+        self.assertIn('<optgroup label="г. Манас">', html)
+        self.assertLess(html.index("Арбуз"), html.index("Яблоко"))
+        self.assertNotIn("Выключен", html)
+        self.assertIn('id="executor-filter"', html)
+        # ручной исполнитель без территории — вне групп, до них
+        self.assertLess(html.index("Тазалык"), html.index("<optgroup"))

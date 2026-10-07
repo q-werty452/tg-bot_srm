@@ -2,7 +2,7 @@
 directory/models.py — справочники.
 
 Всё, что сотрудники ведут сами и на что ссылаются обращения:
-категории, районы города, исполнители (муниципальные предприятия)
+категории, районы области, исполнители (организации и предприятия)
 и контакты (телефоны отделов, горячие линии) — из контактов бот
 собирает справочную часть своих ответов.
 """
@@ -15,6 +15,12 @@ class Executor(models.Model):
 
     name = models.CharField("полное название", max_length=200)
     short_name = models.CharField("короткое название", max_length=80, blank=True)
+    # id организации из справочника бота (organizations.jsonl); у исполнителей,
+    # заведённых вручную, пусто. По нему бот называет исполнителя в classify.
+    external_id = models.CharField("id в справочнике бота", max_length=120,
+                                   unique=True, null=True, blank=True)
+    # Где работает, в читаемом виде: «Сузак (район)», «г. Манас» — для группировки.
+    territory = models.CharField("территория", max_length=120, blank=True)
     is_active = models.BooleanField("действует", default=True)
 
     class Meta:
@@ -60,10 +66,15 @@ class Category(models.Model):
 
 
 class District(models.Model):
-    """Район / микрорайон города."""
+    """Район области или город областного значения (раньше — микрорайон города)."""
+
+    class Kind(models.TextChoices):
+        DISTRICT = "district", "район"
+        CITY = "city", "город областного значения"
 
     name = models.CharField("название", max_length=100)
     slug = models.SlugField("код", unique=True)
+    kind = models.CharField("вид", max_length=16, choices=Kind.choices, blank=True)
     is_active = models.BooleanField("действует", default=True)
 
     class Meta:

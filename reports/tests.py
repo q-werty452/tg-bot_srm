@@ -83,16 +83,88 @@ class MapTests(ReportsTestCase):
         response = self.client.get("/map/")
         self.assertContains(response, "нет координат")
 
-    def test_points_rendered(self):
-        Ticket.objects.filter(pk=self.ticket.pk).update(lat=40.93, lon=73.0)
+    def test_page_structure(self):
         response = self.client.get("/map/")
-        self.assertContains(response, "40.93")
-        self.assertContains(response, self.ticket.number)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "maplibre-gl@4.7.1")
+        self.assertContains(response, 'id="map-canvas"')
+        self.assertContains(response, "jalalabad_boundaries.geojson")
+        self.assertContains(response, "map-config")
 
-    def test_failed_geocode_hidden(self):
-        Ticket.objects.filter(pk=self.ticket.pk).update(lat=-1000, lon=-1000)
-        response = self.client.get("/map/")
-        self.assertContains(response, "нет координат")
+    def test_points_in_data_endpoint(self):
+        Ticket.objects.filter(pk=self.ticket.pk).update(
+            lat=40.93, lon=73.0, geo_source="address")
+        data = self.client.get("/map/data/").json()
+        self.assertEqual(len(data["features"]), 1)
+        props = data["features"][0]["properties"]
+        self.assertEqual(props["number"], self.ticket.number)
+        self.assertEqual(props["accuracy"], "точный адрес")
+        self.assertEqual(data["features"][0]["geometry"]["coordinates"], [73.0, 40.93])
+        self.assertEqual(data["meta"]["on_map"], 1)
+        self.assertEqual(data["meta"]["district_counts"], {"center": 1})
+
+    def test_ticket_without_coords_counted(self):
+        data = self.client.get("/map/data/").json()
+        self.assertEqual(data["features"], [])
+        self.assertEqual(data["meta"]["without_coords"], 1)
+
+    def test_filters(self):
+        Ticket.objects.filter(pk=self.ticket.pk).update(lat=40.93, lon=73.0)
+        def n(q):
+            return len(self.client.get("/map/data/?" + q).json()["features"])
+        self.assertEqual(n("status=all"), 1)
+        self.assertEqual(n("status=overdue"), 0)
+        self.assertEqual(n("category=roads"), 1)
+        self.assertEqual(n("category=nope"), 0)
+        self.assertEqual(n("district=center"), 1)
+        self.assertEqual(n("kind=question"), 0)
+        self.assertEqual(n("period=7"), 1)
+
+    def test_data_queries_do_not_grow(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        Ticket.objects.filter(pk=self.ticket.pk).update(lat=40.93, lon=73.0)
+        with CaptureQueriesContext(connection) as one:
+            self.client.get("/map/data/")
+        citizen = Citizen.objects.get(tg_user_id=1)
+        for i in range(15):
+            Ticket.objects.create(citizen=citizen, title=f"t{i}", lat=40.9, lon=73.1)
+        with CaptureQueriesContext(connection) as many:
+            self.client.get("/map/data/")
+        self.assertEqual(len(one), len(many))
+
+    def test_focus_ticket_included_despite_filters(self):
+        Ticket.objects.filter(pk=self.ticket.pk).update(
+            lat=40.93, lon=73.0, status=Ticket.Status.DONE)
+        self.assertEqual(len(self.client.get("/map/data/?status=open").json()["features"]), 0)
+        data = self.client.get(f"/map/data/?status=open&ticket={self.ticket.number}").json()
+        self.assertEqual(len(data["features"]), 1)
+        page = self.client.get(f"/map/?ticket={self.ticket.number}")
+        self.assertEqual(page.status_code, 200)
+
+    def test_failed_geocode_not_on_map(self):
+        Ticket.objects.filter(pk=self.ticket.pk).update(geo_source="failed")
+        data = self.client.get("/map/data/").json()
+        self.assertEqual(data["features"], [])
+        self.assertEqual(data["meta"]["failed"], 1)
+
+    def test_data_requires_login(self):
+        self.client.logout()
+        self.assertEqual(self.client.get("/map/data/").status_code, 302)
+
+
+class TicketMinimapTests(ReportsTestCase):
+    def test_minimap_with_coords(self):
+        Ticket.objects.filter(pk=self.ticket.pk).update(lat=40.93, lon=73.0, geo_source="settlement")
+        html = self.client.get(f"/tickets/{self.ticket.number}/").content.decode()
+        self.assertIn("ticket-minimap", html)
+        self.assertIn(f"/map/?ticket={self.ticket.number}", html)
+        self.assertIn("примерно", html)
+
+    def test_no_coords_with_address(self):
+        html = self.client.get(f"/tickets/{self.ticket.number}/").content.decode()
+        self.assertNotIn("ticket-minimap", html)
+        self.assertIn("Адрес ещё не найден на карте", html)
 
 
 class GeocodeBoundsTests(TestCase):
@@ -118,7 +190,7 @@ class GeocodeBoundsTests(TestCase):
     def test_bounds_are_sane(self):
         from reports.management.commands.geocode import LAT_MAX, LAT_MIN, LON_MAX, LON_MIN
         self.assertLess(LAT_MAX - LAT_MIN, 3.5, "рамка не должна быть на пол-страны")
-        self.assertLess(LON_MAX - LON_MIN, 4.5, "рамка не должна быть на пол-страны")
+        self.assertLess(LON_MAX - LON_MIN, 5.0, "рамка не должна быть на пол-страны")
 
 
 class TemplateHygieneTests(TestCase):
@@ -160,3 +232,48 @@ class TemplateHygieneTests(TestCase):
                         offenders.append(f"{path.name}:{number}")
         self.assertEqual(offenders, [],
                          "многострочные {# #} выводятся на страницу как текст")
+
+
+class ExportEnrichedTests(ReportsTestCase):
+    def test_new_fields_exported(self):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        Citizen.objects.filter(tg_user_id=1).update(
+            last_name="Иванов", first_name="Айбек", middle_name="Маратович",
+            phone="+996700111222")
+        Ticket.objects.filter(pk=self.ticket.pk).update(
+            settlement="Кашка-Терек", kind=Ticket.Kind.APPEAL)
+        ws = load_workbook(BytesIO(self.client.get("/export/").content)).active
+        rows = list(ws.values)
+        row = dict(zip(rows[0], rows[1]))
+        self.assertEqual(row["Тип обращения"], "Обращение/жалоба")
+        self.assertEqual(row["Населённый пункт"], "Кашка-Терек")
+        self.assertEqual(row["Житель"], "Иванов Айбек Маратович")
+        self.assertEqual((row["Фамилия"], row["Имя"], row["Отчество"]),
+                         ("Иванов", "Айбек", "Маратович"))
+        self.assertEqual(row["Телефон"], "+996700111222")
+
+    def test_export_filters_by_kind_search_and_slugs(self):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        Ticket.objects.filter(pk=self.ticket.pk).update(
+            settlement="Кашка-Терек", kind=Ticket.Kind.APPEAL)
+
+        def count(query):
+            ws = load_workbook(BytesIO(self.client.get("/export/?" + query).content)).active
+            return len(list(ws.values)) - 1
+
+        self.assertEqual(count("kind=appeal"), 1)
+        self.assertEqual(count("kind=question"), 0)
+        self.assertEqual(count("q=Кашка"), 1)
+        self.assertEqual(count("district=center&category=roads"), 1)
+        self.assertEqual(count("district=nowhere"), 0)
+
+
+class MapWithRegionDistrictsTests(ReportsTestCase):
+    def test_map_does_not_depend_on_district_list(self):
+        District.objects.update(is_active=False)
+        District.objects.create(name="Сузакский район", slug="suzak", kind="district")
+        response = self.client.get("/map/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "jalalabad_boundaries.geojson")

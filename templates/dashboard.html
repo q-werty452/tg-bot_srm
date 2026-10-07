@@ -33,7 +33,7 @@
 <form class="filters" method="get">
   <div class="search">
     <svg class="i"><use href="{% static 'icons.svg' %}#search"/></svg>
-    <input type="text" name="q" value="{{ f.q }}" placeholder="Поиск: номер, текст, адрес, житель…">
+    <input type="text" name="q" value="{{ f.q }}" placeholder="Поиск: номер, текст, место, ФИО, телефон…">
   </div>
   <select name="status" onchange="this.form.submit()">
     <option value="">Статус: все</option>
@@ -60,8 +60,14 @@
       <option value="{{ value }}" {% if f.channel == value %}selected{% endif %}>{{ label }}</option>
     {% endfor %}
   </select>
+  <select name="kind" onchange="this.form.submit()">
+    <option value="">Тип: все</option>
+    {% for value, label in kinds %}
+      <option value="{{ value }}" {% if f.kind == value %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
   <button class="btn ghost">Найти</button>
-  {% if f.q or f.status or f.category or f.district or f.channel %}
+  {% if f.q or f.status or f.category or f.district or f.channel or f.kind %}
     <a href="{% url 'dashboard' %}" class="small">Сбросить</a>
   {% endif %}
 </form>

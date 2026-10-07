@@ -2,70 +2,153 @@
 {% load static %}
 {% block title %}Карта{% endblock %}
 {% block content %}
-<div class="page-head"><h1>Карта обращений</h1></div>
+{% comment %}
+  Карта занимает всю рабочую область (см. static/map/map.css). Страница отдаёт
+  только каркас и фильтры; точки приходят JSON-запросом (map_data), границы —
+  статичным файлом из static/geo. Движок — MapLibre GL JS поверх векторной
+  подложки OpenFreeMap; без WebGL включается запасной Leaflet (map-core.js).
+{% endcomment %}
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
+      integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous">
+<link rel="stylesheet" href="{% static 'map/map.css' %}">
 
-<div class="card">
-  <div id="map" style="height: 72vh; border-radius: 8px;"></div>
-  <p class="muted small mb">
-    {% if points %}Точек на карте: {{ points|length }}.
-    {% else %}Пока ни у одной заявки нет координат — показана только область.{% endif %}
-    {% if without_coords %}Без координат: {{ without_coords }} — их адреса ещё не распознаны
-    (запусти на сервере: python manage.py geocode).{% endif %}
-    Карте нужен интернет: подложка — Esri, границы районов — OpenStreetMap.</p>
+<div class="map-page" id="map-app" aria-busy="true"
+     data-boundaries-url="{% static 'geo/jalalabad_boundaries.geojson' %}"
+     data-leaflet-engine-url="{% static 'map/engine-leaflet.js' %}">
+  <div class="map-canvas" id="map-canvas" role="application" aria-label="Карта обращений жителей"></div>
+
+  <div class="map-side">
+  <section class="map-panel" id="map-panel" aria-label="Фильтры карты">
+    <div class="map-panel-head">
+      <div class="map-title">
+        <h1>Карта обращений</h1>
+        <p class="map-counters" id="map-counters" aria-live="polite">
+          <span>на карте <b id="cnt-on-map">{{ totals.on_map }}</b></span>
+          <span title="">без координат <b id="cnt-without">{{ totals.without_coords }}</b></span>
+        </p>
+      </div>
+      <span class="map-spinner" aria-hidden="true"></span>
+      <button type="button" class="map-icon-btn" id="map-panel-toggle" aria-expanded="true"
+              aria-controls="map-panel-body" title="Свернуть">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+      </button>
+    </div>
+
+    <div class="map-panel-body" id="map-panel-body">
+      <div class="map-field">
+        <span class="map-label" id="lbl-status">Статус</span>
+        <div class="seg" role="radiogroup" aria-labelledby="lbl-status" data-filter="status">
+          {% for value, label in statuses %}
+            <button type="button" role="radio" data-value="{{ value }}"
+                    aria-checked="{% if f.status == value %}true{% else %}false{% endif %}">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <label class="map-field">
+        <span class="map-label">Категория</span>
+        <select data-filter="category">
+          <option value="">Все категории</option>
+          {% for c in categories %}
+            <option value="{{ c.slug }}" {% if f.category == c.slug %}selected{% endif %}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="map-field">
+        <span class="map-label">Район</span>
+        <select data-filter="district">
+          <option value="">Вся область</option>
+          {% for d in districts %}
+            <option value="{{ d.slug }}" {% if f.district == d.slug %}selected{% endif %}>{{ d.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="map-field">
+        <span class="map-label">Тип обращения</span>
+        <select data-filter="kind">
+          <option value="">Любой</option>
+          {% for value, label in kinds %}
+            <option value="{{ value }}" {% if f.kind == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <div class="map-field">
+        <span class="map-label" id="lbl-period">Период</span>
+        <div class="seg" role="radiogroup" aria-labelledby="lbl-period" data-filter="period">
+          {% for value, label in periods %}
+            <button type="button" role="radio" data-value="{{ value }}"
+                    aria-checked="{% if f.period == value %}true{% else %}false{% endif %}">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <label class="map-switch">
+        <input type="checkbox" id="density-toggle">
+        <i aria-hidden="true"></i>
+        <span>Плотность обращений по районам</span>
+      </label>
+
+      <button type="button" class="map-link" id="filters-reset">Сбросить фильтры</button>
+    </div>
+  </section>
+
+  <aside class="map-legend" id="map-legend" aria-label="Условные обозначения">
+    <div class="map-legend-head">
+      <b>Обозначения</b>
+      <button type="button" class="map-icon-btn" id="map-legend-toggle" aria-expanded="true" title="Свернуть">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+      </button>
+    </div>
+    <div class="map-legend-body">
+      <div class="lg-group">
+        <div class="lg-row"><i class="lg-solid"></i>граница области</div>
+        <div class="lg-row"><i class="lg-dash"></i>районы и города</div>
+      </div>
+      <details class="lg-group lg-cats">
+        <summary>Цвета категорий</summary>
+        {% for c in config.categories %}
+          <div class="lg-row"><i class="lg-dot" style="background:{{ c.color }}"></i>{{ c.name }}</div>
+        {% endfor %}
+        <div class="lg-row"><i class="lg-dot" style="background:#8B96A8"></i>без категории</div>
+      </details>
+      <div class="lg-group">
+        <div class="lg-row"><i class="lg-cluster">12</i>несколько заявок рядом — нажмите, чтобы приблизить</div>
+        <div class="lg-row"><i class="lg-overdue"></i>красное кольцо — заявка просрочена</div>
+        <div class="lg-row"><i class="lg-approx"></i>ореол — место примерное, по населённому пункту</div>
+        <div class="lg-row"><i class="lg-pin"></i>белый центр — геометка, которую прислал житель</div>
+      </div>
+      <p class="lg-credit">Данные карты © участники
+        <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>,
+        подложка <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>.</p>
+    </div>
+  </aside>
+  </div>
+
+  <div class="map-tip" id="map-tip" hidden></div>
+  <div class="map-toast" id="map-toast" role="status" hidden></div>
+  <div class="map-empty" id="map-empty" {% if totals.on_map %}hidden{% endif %}>
+    <span id="map-empty-text">{% if totals.without_coords %}Пока ни у одной заявки нет координат — показана только область.{% else %}По выбранным фильтрам заявок нет.{% endif %}</span>
+  </div>
+  <div class="map-note" id="map-note" role="status" hidden></div>
+  <div class="map-error" id="map-error" role="alert" hidden>
+    <p></p>
+    <button type="button" class="btn">Обновить страницу</button>
+  </div>
+  <noscript><div class="map-error"><p>Для карты нужен включённый JavaScript.</p></div></noscript>
 </div>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-  const map = L.map('map', {minZoom: 7});
 
-  // tile.openstreetmap.org — демо-сервер для разработки, использовать его
-  // в приложениях запрещено политикой OSM (см. osm.wiki/Blocked — панель
-  // словила именно эту блокировку). CARTO после смены политики стала
-  // требовать API-ключ даже для бесплатных тайлов («API KEY REQUIRED»
-  // прямо на подложке). Esri Light Gray Canvas — бесплатно, без ключа,
-  // без ограничений на встраивание, и заодно выглядит спокойнее и чище
-  // обычной уличной карты — линии районов на ней читаются лучше.
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-    attribution: '&copy; Esri', maxZoom: 16,
-  }).addTo(map);
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 16,
-  }).addTo(map);
+{{ config|json_script:"map-config" }}
+{% endblock %}
 
-  // Границы области и районов — статичный файл (см. docs/details.md о том,
-  // почему не дёргаем Nominatim/Overpass на каждое открытие страницы):
-  // скачаны один раз, лежат в static/geo и не требуют интернета от самого
-  // сервера панели — только у браузера сотрудника при просмотре карты.
-  const boundsGroup = L.featureGroup().addTo(map);
-  fetch('{% static "geo/jalalabad_boundaries.geojson" %}')
-    .then(r => r.json())
-    .then(geo => {
-      L.geoJSON(geo, {
-        style: f => f.properties.kind === 'region'
-          ? {color: '#1C2434', weight: 2.5, fill: false, dashArray: '6 4'}
-          : {color: '#2F6BDE', weight: 1.2, fill: false, opacity: .55},
-        onEachFeature: (f, layer) => layer.bindTooltip(f.properties.name, {sticky: true}),
-      }).addTo(boundsGroup);
-      if (!ticketsGroup.getLayers().length) map.fitBounds(boundsGroup.getBounds());
-    })
-    .catch(() => {});
-
-  const points = {{ points_json|safe }};
-  const ticketsGroup = L.featureGroup().addTo(map);
-  for (const p of points) {
-    L.circleMarker([p.lat, p.lon], {
-      radius: 8, weight: 2,
-      color: p.overdue ? '#E5484D' : '#2F6FB4',
-      fillColor: p.overdue ? '#E5484D' : '#2F6FB4', fillOpacity: .6,
-    }).bindPopup(
-      '<b>#' + p.number + '</b><br>' + p.title + '<br>' + p.status +
-      '<br><a href="/tickets/' + p.number + '/">Открыть карточку</a>'
-    ).addTo(ticketsGroup);
-  }
-  if (ticketsGroup.getLayers().length) {
-    map.fitBounds(ticketsGroup.getBounds().pad(0.2));
-  } else {
-    map.setView([40.9333, 72.9833], 8);  // область целиком, пока нет точек
-  }
-</script>
+{% block scripts %}
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
+        integrity="sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj" crossorigin="anonymous"></script>
+<script src="{% static 'map/map-common.js' %}"></script>
+<script src="{% static 'map/engine-maplibre.js' %}"></script>
+<script src="{% static 'map/map-core.js' %}"></script>
 {% endblock %}

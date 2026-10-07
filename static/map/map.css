@@ -1,0 +1,251 @@
+/* ==========================================================================
+   Карта обращений: страница /map/, попапы точек и мини-карта в карточке заявки.
+   Цвета и радиусы — из переменных static/app.css, чтобы карта не выбивалась
+   из панели. Подключается только на страницах, где есть карта.
+   ========================================================================== */
+
+/* ----------------------------------------------------------------- страница
+   Карта занимает всю рабочую область: у .main убираем поля, у .inner —
+   потолок ширины (он нужен таблицам, а не карте). Высота — весь экран, поэтому
+   у страницы нет собственной прокрутки. Без :has() (старые браузеры) страница
+   остаётся в обычных полях и просто чуть меньше. */
+.main:has(.map-page) { padding: 0; }
+.main:has(.map-page) > .inner { max-width: none; }
+
+.map-page {
+  position: relative; isolation: isolate; overflow: hidden;
+  height: calc(100vh - 62px); min-height: 480px;
+  background: var(--bg);
+}
+.main:has(.map-page) .map-page { height: 100vh; height: 100dvh; }
+
+.map-canvas { position: absolute; inset: 0; background: var(--bg); }
+.map-canvas.leaflet-container { font: inherit; }
+
+/* ----------------------------------------------------------------- левая колонка: панель + легенда
+   Одна колонка вместо двух плавающих блоков: если высоты экрана не хватает,
+   блоки делят её между собой и прокручиваются, а не налезают друг на друга. */
+.map-side {
+  position: absolute; z-index: 5; top: 14px; left: 14px; bottom: 14px; width: 322px;
+  display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+}
+.map-side > * { pointer-events: auto; }
+
+.map-panel {
+  flex: 0 1 auto; min-height: 0; overflow: auto; padding: 14px 16px 14px;
+  background: rgba(255, 255, 255, .93);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15); backdrop-filter: blur(10px) saturate(1.15);
+  border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(14, 28, 54, .14), 0 2px 6px rgba(14, 28, 54, .08);
+}
+.map-panel-head { display: flex; align-items: flex-start; gap: 8px; }
+.map-title { flex: 1; min-width: 0; }
+.map-panel h1 { margin: 0; font-size: 17px; font-weight: 650; line-height: 1.25; }
+.map-counters { margin: 3px 0 0; font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 0 10px; }
+.map-counters b { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
+.map-counters span + span::before { content: "·"; margin-right: 10px; color: #B5BFD0; }
+.map-counters span[title] { cursor: help; }
+
+.map-icon-btn {
+  flex: none; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface);
+  color: var(--muted); cursor: pointer; padding: 0;
+}
+.map-icon-btn:hover { color: var(--text); border-color: #C9D3E3; }
+.map-icon-btn svg { width: 15px; height: 15px; transition: transform .2s; }
+.panel-collapsed #map-panel-toggle svg, .legend-collapsed #map-legend-toggle svg { transform: rotate(180deg); }
+
+.map-spinner {
+  flex: none; width: 15px; height: 15px; margin-top: 6px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  opacity: 0; transition: opacity .15s;
+}
+.is-loading .map-spinner { opacity: 1; animation: map-spin .8s linear infinite; }
+@keyframes map-spin { to { transform: rotate(360deg); } }
+
+.map-panel-body { margin-top: 12px; display: flex; flex-direction: column; gap: 11px; }
+.panel-collapsed .map-panel-body { display: none; }
+.map-label { display: block; margin: 0 0 4px; font-size: 11.5px; font-weight: 600; letter-spacing: .4px;
+  text-transform: uppercase; color: var(--muted); }
+.map-field select { padding: 7px 10px; font-size: 14px; }
+
+.seg { display: flex; gap: 2px; padding: 3px; background: var(--neutral-soft); border-radius: 9px; }
+.seg button {
+  flex: 1; border: 0; background: transparent; cursor: pointer; white-space: nowrap;
+  font: inherit; font-size: 13px; padding: 5px 4px; border-radius: 7px; color: var(--muted);
+}
+.seg button:hover { color: var(--text); }
+.seg button[aria-checked="true"] {
+  background: var(--surface); color: var(--text); font-weight: 600;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .14);
+}
+.seg button:focus-visible, .map-icon-btn:focus-visible, .map-link:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+
+.map-switch { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 14px; color: var(--text); cursor: pointer; }
+.map-switch input { position: absolute; opacity: 0; pointer-events: none; }
+.map-switch i {
+  flex: none; position: relative; width: 34px; height: 20px; border-radius: 10px;
+  background: #C9D3E3; transition: background .2s;
+}
+.map-switch i::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(16, 24, 40, .3); transition: transform .2s;
+}
+.map-switch input:checked + i { background: var(--accent); }
+.map-switch input:checked + i::after { transform: translateX(14px); }
+.map-switch input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.map-link { align-self: flex-start; border: 0; background: none; padding: 0; cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--accent); }
+.map-link:hover { text-decoration: underline; }
+
+/* ----------------------------------------------------------------- легенда */
+.map-legend {
+  flex: 0 1 auto; min-height: 0; overflow: auto; margin-top: auto; padding: 10px 12px; font-size: 12.5px; color: var(--text);
+  background: rgba(255, 255, 255, .93);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(14, 28, 54, .12);
+}
+.map-legend-head { display: flex; align-items: center; justify-content: space-between; }
+.map-legend-head b { font-size: 11.5px; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); }
+.map-legend-head .map-icon-btn { width: 24px; height: 24px; }
+.legend-collapsed .map-legend-body { display: none; }
+.map-legend-body { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.lg-group { display: flex; flex-direction: column; gap: 5px; }
+.lg-cats summary { cursor: pointer; font-size: 12.5px; color: var(--accent); list-style-position: inside; }
+.lg-cats[open] summary { margin-bottom: 5px; }
+.lg-cats .lg-row + .lg-row { margin-top: 5px; }
+.lg-row { display: flex; align-items: center; gap: 8px; line-height: 1.3; }
+.lg-row > i { flex: none; width: 20px; display: inline-flex; align-items: center; justify-content: center; }
+.lg-solid { height: 3px; border-radius: 2px; background: var(--sidebar); box-shadow: 0 0 6px 1px rgba(47, 107, 222, .45); }
+.lg-dash { height: 0; border-top: 2px dashed var(--accent); }
+.lg-dot { width: 11px !important; height: 11px; margin: 0 4.5px; border-radius: 50%; border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(14, 28, 54, .25); box-sizing: content-box; }
+.lg-cluster { width: 20px !important; height: 20px; border-radius: 50%; background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 700; font-style: normal; border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(14, 28, 54, .25); box-sizing: border-box; }
+.lg-overdue { width: 14px !important; height: 14px; margin: 0 3px; border-radius: 50%;
+  border: 2px solid var(--danger); box-sizing: border-box; }
+.lg-approx { width: 20px !important; height: 20px; border-radius: 50%; background: rgba(47, 107, 222, .16);
+  border: 1.5px solid rgba(47, 107, 222, .5); box-sizing: border-box; }
+.lg-pin { width: 14px !important; height: 14px; margin: 0 3px; border-radius: 50%; background: var(--accent);
+  border: 2px solid var(--sidebar); position: relative; box-sizing: border-box; }
+.lg-pin::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; background: #fff; }
+.lg-credit { margin: 2px 0 0; font-size: 11px; color: var(--muted); line-height: 1.35; }
+.lg-credit a { color: var(--muted); text-decoration: underline; }
+
+/* ----------------------------------------------------------------- подсказки и сообщения */
+.map-tip {
+  position: absolute; z-index: 6; left: 0; top: 0; pointer-events: none;
+  display: flex; flex-direction: column; gap: 1px; padding: 7px 11px;
+  background: var(--sidebar); color: #fff; border-radius: 9px; font-size: 13px;
+  box-shadow: 0 6px 18px rgba(14, 28, 54, .3);
+}
+.map-tip span { color: #B9C7E4; font-size: 12.5px; }
+
+.map-toast, .map-empty, .map-note {
+  position: absolute; z-index: 7; left: 50%; transform: translateX(-50%);
+  max-width: min(560px, calc(100% - 28px)); padding: 10px 16px; border-radius: 11px;
+  font-size: 13.5px; line-height: 1.4; text-align: center;
+}
+.map-toast { bottom: 54px; background: var(--sidebar); color: #fff; box-shadow: 0 10px 28px rgba(14, 28, 54, .35); }
+.map-empty { top: 16px; background: rgba(255, 255, 255, .95); color: var(--muted); border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgba(14, 28, 54, .1); }
+.map-note { top: 16px; background: var(--warn-soft); color: #7B4E08; border: 1px solid #EBD3A4; }
+.map-empty:not([hidden]) ~ .map-note:not([hidden]) { top: 64px; }
+.map-error {
+  position: absolute; inset: 0; z-index: 8; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 12px; padding: 30px; text-align: center; background: var(--bg);
+}
+.map-error p { max-width: 460px; margin: 0; color: var(--muted); }
+
+/* ----------------------------------------------------------------- элементы управления движков */
+.map-canvas .maplibregl-ctrl-group, .map-canvas .leaflet-bar {
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  box-shadow: 0 4px 14px rgba(14, 28, 54, .12);
+}
+.map-canvas .maplibregl-ctrl-group:not(:empty) { box-shadow: 0 4px 14px rgba(14, 28, 54, .12); }
+.map-home-btn { display: flex !important; align-items: center; justify-content: center; color: var(--text); }
+.leaflet-bar .map-home-btn { width: 30px; height: 30px; background: #fff; }
+.map-canvas .maplibregl-ctrl-attrib, .map-canvas .leaflet-control-attribution {
+  font-size: 11px; background: rgba(255, 255, 255, .8); border-radius: 8px 0 0 0;
+}
+.map-canvas .maplibregl-ctrl-scale { font-size: 11px; }
+.map-canvas .maplibregl-ctrl-top-right { top: 6px; right: 4px; }
+
+/* ----------------------------------------------------------------- попап заявки */
+.map-popup .maplibregl-popup-content, .map-popup .leaflet-popup-content-wrapper {
+  padding: 0; border-radius: 12px; font: inherit; color: var(--text);
+  box-shadow: 0 14px 36px rgba(14, 28, 54, .28);
+}
+.map-popup .leaflet-popup-content { margin: 0; font: inherit; }
+.map-popup .maplibregl-popup-close-button { font-size: 20px; width: 28px; height: 28px; color: var(--muted); }
+.tp-card { padding: 14px 16px 12px; min-width: 250px; }
+.tp-head { display: flex; align-items: center; gap: 10px; padding-right: 22px; margin-bottom: 6px; }
+.tp-num { font-weight: 700; font-size: 14px; }
+.tp-title { font-weight: 600; font-size: 14.5px; line-height: 1.3; margin-bottom: 8px; }
+.tp-chip {
+  display: inline-flex; align-items: center; gap: 6px; margin-bottom: 8px; padding: 2px 10px;
+  font-size: 12.5px; font-weight: 550; color: var(--text); background: var(--neutral-soft); border-radius: 20px;
+}
+.tp-chip i { width: 9px; height: 9px; border-radius: 50%; }
+.tp-row { display: flex; gap: 10px; font-size: 13px; line-height: 1.35; margin-bottom: 4px; }
+.tp-k { flex: none; width: 72px; color: var(--muted); }
+.tp-v { min-width: 0; overflow-wrap: anywhere; }
+.tp-open { display: inline-block; margin-top: 6px; font-weight: 600; font-size: 13.5px; }
+.tp-multi-head { padding: 12px 40px 8px 16px; font-weight: 650; font-size: 13.5px; }
+.tp-multi-list { max-height: 330px; overflow: auto; }
+.tp-multi-list .tp-card + .tp-card { border-top: 1px solid var(--border); }
+
+/* ----------------------------------------------------------------- запасной движок (Leaflet) */
+.leaflet-cluster span {
+  display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; box-sizing: border-box;
+  border-radius: 50%; border: 3px solid #fff; color: #fff; font-weight: 700; font-size: 13px;
+  box-shadow: 0 2px 8px rgba(14, 28, 54, .35);
+}
+.leaflet-cluster.has-overdue span { border-color: var(--danger); }
+.leaflet-container .leaflet-district { cursor: pointer; }
+
+/* Анимации запасного режима: на CSS и «ступеньками» (steps), чтобы слабая
+   машина не перерисовывала карту 60 раз в секунду. */
+@keyframes map-mask-in { from { fill-opacity: 0; } }
+@keyframes oblast-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes oblast-breathe { 0%, 100% { stroke-opacity: .18; } 50% { stroke-opacity: .42; } }
+@keyframes district-march { to { stroke-dashoffset: -11; } }
+.leaflet-mask { animation: map-mask-in .6s ease-out both; }
+.leaflet-oblast-line, .leaflet-oblast-glow {
+  stroke-dasharray: 1; stroke-dashoffset: 0;
+  animation: oblast-draw 1.8s cubic-bezier(.45, 0, .2, 1) .6s both;
+}
+.leaflet-oblast-glow {
+  filter: blur(3px);
+  animation: oblast-draw 1.8s cubic-bezier(.45, 0, .2, 1) .6s both, oblast-breathe 4.6s ease-in-out 2.6s infinite;
+}
+.leaflet-district { animation: district-march 1.6s steps(11) infinite; }
+
+/* ----------------------------------------------------------------- мини-карта в карточке заявки */
+.minimap {
+  position: relative; height: 210px; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--bg);
+}
+.minimap .maplibregl-ctrl-attrib { font-size: 10px; }
+.minimap-note { margin: 8px 0 10px; }
+.minimap-fallback { padding: 14px; font-size: 13px; color: var(--muted); }
+
+/* ----------------------------------------------------------------- узкие экраны */
+@media (max-width: 900px) {
+  .map-side { top: 8px; left: 8px; bottom: 8px; width: min(322px, calc(100% - 16px)); }
+  .map-toast { bottom: 64px; }
+}
+
+/* Пользователь просит поменьше движения: ни прорисовки, ни бега, ни пульса.
+   MapLibre-часть то же самое проверяет в JS (ManasMap.reducedMotion). */
+@media (prefers-reduced-motion: reduce) {
+  .leaflet-mask, .leaflet-oblast-line, .leaflet-oblast-glow, .leaflet-district { animation: none !important; }
+  .leaflet-oblast-line, .leaflet-oblast-glow { stroke-dasharray: none; }
+  .map-spinner, .is-loading .map-spinner { animation: none; }
+  .map-icon-btn svg, .map-switch i, .map-switch i::after { transition: none; }
+}

@@ -13,8 +13,8 @@ class MessageInline(admin.TabularInline):
 class TicketAdmin(admin.ModelAdmin):
     list_display = ["number", "title", "citizen", "channel", "category", "district",
                     "status", "answer_mode", "created_at"]
-    list_filter = ["status", "channel", "category", "district", "answer_mode"]
-    search_fields = ["number", "title", "description", "address"]
+    list_filter = ["status", "kind", "channel", "category", "district", "answer_mode"]
+    search_fields = ["number", "title", "description", "address", "settlement"]
     readonly_fields = ["number", "created_at", "updated_at", "last_message_at"]
     inlines = [MessageInline]
 
@@ -24,7 +24,7 @@ class CitizenAdmin(admin.ModelAdmin):
     list_display = ["__str__", "channel", "tg_user_id", "chat_id", "phone",
                     "district", "is_blocked", "subscribed"]
     list_filter = ["channel", "is_blocked", "subscribed"]
-    search_fields = ["first_name", "last_name", "username", "phone"]
+    search_fields = ["first_name", "last_name", "middle_name", "username", "phone"]
 
 
 admin.site.register([Message, Attachment, Note, Event])

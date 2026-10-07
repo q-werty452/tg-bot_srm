@@ -21,11 +21,11 @@ from botcontrol.api import (
 from botcontrol.views import bot_keys, bot_settings, broadcasts, quick_answers
 from audit.views import audit_log
 from directory.views import directory_home
-from reports.views import export_xlsx, stats, tickets_map
+from reports.views import export_xlsx, map_data, stats, tickets_map
 from users.views import staff_list
 from tickets.api import (
     AiMessageView, ChatContextView, ClassifyView, CloseByChatView,
-    HistoryView, IncomingView, RatingView, RetitleView, SubscriptionView,
+    HistoryView, IncomingView, RatingView, RetitleView, SplitView, SubscriptionView,
 )
 from tickets.views import dashboard, ticket_action, ticket_detail, ticket_new
 
@@ -35,6 +35,7 @@ api_v1 = [
     path("tickets/<int:pk>/history/", HistoryView.as_view(), name="api-history"),
     path("tickets/<int:pk>/classify/", ClassifyView.as_view(), name="api-classify"),
     path("tickets/<int:pk>/retitle/", RetitleView.as_view(), name="api-retitle"),
+    path("tickets/<int:pk>/split/", SplitView.as_view(), name="api-split"),
     path("messages/<int:pk>/rating/", RatingView.as_view(), name="api-rating"),
     path("chats/<int:chat_id>/context/", ChatContextView.as_view(), name="api-chat-context"),
     path("chats/<int:chat_id>/close/", CloseByChatView.as_view(), name="api-chat-close"),
@@ -69,6 +70,7 @@ urlpatterns = [
     path("stats/", stats, name="stats"),
     path("export/", export_xlsx, name="export"),
     path("map/", tickets_map, name="tickets_map"),
+    path("map/data/", map_data, name="map_data"),
     path("audit/", audit_log, name="audit_log"),
     path("directory/", directory_home, name="directory_home"),
     path("staff/", staff_list, name="staff_list"),

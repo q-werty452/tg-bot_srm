@@ -214,6 +214,9 @@ table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
 .badge.overdue { background: var(--danger); color: #fff; }
 .badge.chan-telegram { background: var(--accent-soft); color: var(--accent); }
 .badge.chan-whatsapp { background: var(--ok-soft); color: var(--ok); }
+.badge.kind-appeal { background: var(--warn-soft); color: var(--warn); }
+.badge.kind-question { background: var(--neutral-soft); color: var(--muted); }
+.badge.kind-other { background: var(--neutral-soft); color: var(--muted); }
 .dot-unread {
   width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
   display: inline-block; margin-right: 2px;

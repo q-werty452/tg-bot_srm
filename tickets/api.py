@@ -15,7 +15,9 @@ from rest_framework.views import APIView
 
 from botcontrol.authentication import BotTokenAuthentication, IsBot
 from botcontrol.models import Outbox
-from directory.models import Category, District
+from directory.models import Category, District, Executor
+from reports.geocoding import apply_pin, schedule_geocode
+from tickets.lifecycle import SplitError, current_ticket, split_ticket
 from tickets.models import Attachment, Channel, Citizen, Event, Message, Ticket
 
 
@@ -75,14 +77,21 @@ class IncomingView(BotAPIView):
             return Response({"detail": "Пустое обращение: нет ни текста, ни файлов"}, status=400)
 
         # Профиль обновляем каждым сообщением: люди меняют имена и номера.
+        # Но если ФИО назвал сам житель (name_confirmed), ник из мессенджера
+        # его не затирает — иначе «Иванов Айбек Маратович» снова станет «bek_77».
         updates = {"chat_id": chat_id, "last_inbound_at": timezone.now()}
-        for field in ("first_name", "last_name", "username", "phone"):
+        profile_fields = ["username", "phone"]
+        if not citizen.name_confirmed:
+            profile_fields = ["first_name", "last_name"] + profile_fields
+        for field in profile_fields:
             value = (data.get(field) or "").strip()
             if value:
                 updates[field] = value
         Citizen.objects.filter(pk=citizen.pk).update(**updates)
 
-        ticket = citizen.tickets.open().order_by("-created_at").first()
+        # Продолжить открытую заявку или завести новую (см. tickets/lifecycle.py:
+        # справочная заявка после долгой паузы закрывается сама).
+        ticket, closed = current_ticket(citizen)
         created = ticket is None
         if created:
             ticket = Ticket(
@@ -101,7 +110,9 @@ class IncomingView(BotAPIView):
             ticket.save()
             Event.objects.create(ticket=ticket, kind="created",
                                  payload={"source": channel})
-            self._notify_staff(ticket, text)
+            # Сотрудникам сообщаем не здесь, а когда бот поймёт, что это
+            # настоящее обращение (ClassifyView, kind=appeal): иначе каждое
+            # «здравствуйте» и справочный вопрос будили бы служебный чат.
 
         message = Message.objects.create(
             ticket=ticket,
@@ -133,22 +144,42 @@ class IncomingView(BotAPIView):
             "number": ticket.number,
             "answer_mode": ticket.answer_mode,
             "created": created,
+            # id сообщения жителя — по нему бот просит разделить заявку,
+            # если с этого сообщения началась другая тема (SplitView).
+            "message_id": message.pk,
+            # Справочная заявка, закрытая сейчас из-за долгой паузы.
+            "closed_ticket": closed.number if closed else None,
         })
 
-    @staticmethod
-    def _notify_staff(ticket: Ticket, text: str) -> None:
-        """Уведомление в служебный чат о новой заявке — через общую очередь."""
-        staff_chat = _int_or_none(settings.STAFF_CHAT_ID)
-        if not staff_chat:
-            return
-        preview = text[:120] + ("…" if len(text) > 120 else "")
-        Outbox.objects.create(
-            chat_id=staff_chat,
-            kind=Outbox.Kind.NOTIFY,
-            ticket=ticket,
-            channel=Channel.TELEGRAM,  # уведомления сотрудникам — всегда в Telegram
-            text=f"Новое обращение #{ticket.number}\nОт: {ticket.citizen}\n{preview}",
-        )
+
+def notify_staff(ticket: Ticket) -> None:
+    """
+    Уведомление в служебный чат о новом обращении — через общую очередь.
+
+    Зовётся, когда бот впервые понял, что это настоящее обращение (а не
+    справочный вопрос), поэтому в тексте уже есть суть и место, а не
+    первое «здравствуйте».
+    """
+    staff_chat = _int_or_none(settings.STAFF_CHAT_ID)
+    if not staff_chat:
+        return
+    place = " · ".join(x for x in (
+        ticket.district.name if ticket.district else "", ticket.settlement, ticket.address) if x)
+    summary = (ticket.description or "").strip()
+    summary = summary[:200] + ("…" if len(summary) > 200 else "")
+    lines = [f"Новое обращение #{ticket.number}: {ticket.title}",
+             f"От: {ticket.citizen}"]
+    if place:
+        lines.append(f"Место: {place}")
+    if summary:
+        lines.append(summary)
+    Outbox.objects.create(
+        chat_id=staff_chat,
+        kind=Outbox.Kind.NOTIFY,
+        ticket=ticket,
+        channel=Channel.TELEGRAM,  # уведомления сотрудникам — всегда в Telegram
+        text="\n".join(lines),
+    )
 
 
 class AiMessageView(BotAPIView):
@@ -218,7 +249,19 @@ class ClassifyView(BotAPIView):
     Классификация в боте фоновая, поэтому приходит отдельным запросом позже.
     Правило: НЕ затирать то, что уже поправил сотрудник. Обновляются только
     пустые поля; category/district — по slug, незнакомый slug игнорируется.
+
+    Дополнительно бот присылает данные, извлечённые из переписки:
+      last_name / first_name / middle_name — ФИО, названное жителем;
+      phone, settlement (населённый пункт), address;
+      kind — тип обращения (appeal / question / other);
+      executor — id организации из справочника бота (Executor.external_id);
+      description — краткая суть обращения от ИИ.
+    Ручную правку сотрудника узнаём по ленте событий заявки: событие
+    с user — это действие человека (так же устроен RetitleView).
     """
+
+    # Сколько символов краткой сути берём от ИИ.
+    DESCRIPTION_MAX = 2000
 
     def post(self, request, pk: int):
         ticket = Ticket.objects.filter(pk=pk).first()
@@ -228,7 +271,14 @@ class ClassifyView(BotAPIView):
         applied = []
         data = request.data
 
-        title = (data.get("title") or "").strip()[:200]
+        def text(key, limit):
+            return (data.get(key) or "").strip()[:limit]
+
+        def staff_touched(kind):
+            """Сотрудник уже менял это поле руками?"""
+            return ticket.events.filter(kind=kind, user__isnull=False).exists()
+
+        title = text("title", 200)
         # Заголовок считается «автоматическим», если он равен началу описания —
         # такой можно заменить на осмысленный от ИИ.
         auto_title = not ticket.title or ticket.title == (ticket.description or "")[:60]
@@ -257,17 +307,159 @@ class ClassifyView(BotAPIView):
                 ticket.district = district
                 applied.append("district")
 
-        address = (data.get("address") or "").strip()[:250]
+        address = text("address", 250)
         if address and not ticket.address:
             ticket.address = address
             applied.append("address")
+
+        settlement = text("settlement", 150)
+        if settlement and not ticket.settlement:
+            ticket.settlement = settlement
+            applied.append("settlement")
+
+        # Тип обращения бот уточняет по ходу разговора, пока его не менял сотрудник.
+        kind = text("kind", 16)
+        if (kind in Ticket.Kind.values and kind != ticket.kind
+                and not staff_touched("kind")):
+            ticket.kind = kind
+            applied.append("kind")
+
+        # Профильная организация вместо категорийного исполнителя по умолчанию:
+        # заменяем, пока исполнитель пуст или поставлен автоматически.
+        external_id = text("executor", 120)
+        if external_id and not staff_touched("executor"):
+            executor = Executor.objects.filter(
+                external_id=external_id, is_active=True).first()
+            if executor and executor.pk != ticket.executor_id:
+                ticket.executor = executor
+                if "executor" not in applied:
+                    applied.append("executor")
+
+        description = text("description", self.DESCRIPTION_MAX)
+        if description and description != ticket.description and self._auto_description(ticket):
+            ticket.description = description
+            applied.append("description")
+
+        if self._apply_citizen(ticket.citizen, data):
+            applied.append("name")
+        if self._apply_phone(ticket.citizen, text("phone", 40)):
+            applied.append("phone")
+
+        # Точка, которую житель отправил с карты (геометка в мессенджере).
+        lat, lon = data.get("lat"), data.get("lon")
+        if lat is not None and lon is not None:
+            try:
+                if apply_pin(ticket, float(lat), float(lon)):
+                    applied.append("pin")
+            except (TypeError, ValueError):
+                pass
 
         if applied:
             ticket.save()
             Event.objects.create(ticket=ticket, kind="classified",
                                  payload={"applied": applied})
+        # Адрес, село или район изменились — заявка встанет на карту сама
+        # (фоном: геокодер внешний и не должен задерживать ответ боту).
+        if {"address", "settlement", "district"} & set(applied):
+            schedule_geocode(ticket.pk)
+
+        # Бот впервые понял, что это настоящее обращение, — будим служебный
+        # чат. Один раз на заявку: повторная классификация не дублирует.
+        if (ticket.kind == Ticket.Kind.APPEAL
+                and not ticket.events.filter(kind="staff_notified").exists()):
+            Event.objects.create(ticket=ticket, kind="staff_notified", payload={})
+            notify_staff(ticket)
         return Response({"applied": applied})
 
+    @staticmethod
+    def _auto_description(ticket: Ticket) -> bool:
+        """Суть обращения ещё «автоматическая» и её можно заменить?
+
+        Да, если она пуста, совпадает с первым сообщением жителя (так её
+        ставит incoming) или была записана прошлой классификацией — и
+        сотрудник её руками не правил.
+        """
+        if ticket.events.filter(kind="description", user__isnull=False).exists():
+            return False
+        current = (ticket.description or "").strip()
+        if not current:
+            return True
+        first = ticket.messages.filter(author=Message.Author.CITIZEN).first()
+        if first is not None and current == (first.text or "").strip():
+            return True
+        return any(
+            "description" in e.payload.get("applied", [])
+            for e in ticket.events.filter(kind="classified")
+        )
+
+    @staticmethod
+    def _apply_citizen(citizen: Citizen, data) -> bool:
+        """ФИО жителя. Вернуть True, если что-то записали.
+
+        Первое ФИО от бота (name_confirmed=False) целиком заменяет данные
+        профиля мессенджера: там ник вроде «Mama» или «bek_77», и если житель
+        назвал только фамилию, ник не должен остаться в поле имени
+        («Асанова Mama»). Когда ФИО уже подтверждено, дополняем только
+        пустые поля (скажем, отчество, которое житель назвал позже) — так
+        правку сотрудника бот не перетрёт.
+        """
+        incoming = {
+            field: (data.get(field) or "").strip()[:120]
+            for field in ("last_name", "first_name", "middle_name")
+        }
+        changed = []
+        if not citizen.name_confirmed:
+            if not (incoming["last_name"] or incoming["first_name"]):
+                return False
+            for field, value in incoming.items():
+                if value != getattr(citizen, field):
+                    setattr(citizen, field, value)
+                    changed.append(field)
+            citizen.name_confirmed = True
+            changed.append("name_confirmed")
+        else:
+            for field, value in incoming.items():
+                if value and not getattr(citizen, field):
+                    setattr(citizen, field, value)
+                    changed.append(field)
+        if changed:
+            citizen.save(update_fields=changed)
+        return bool(changed)
+
+    @staticmethod
+    def _apply_phone(citizen: Citizen, phone: str) -> bool:
+        """Телефон — только если у жителя его ещё нет."""
+        if phone and not citizen.phone:
+            citizen.phone = phone
+            citizen.save(update_fields=["phone"])
+            return True
+        return False
+
+
+
+class SplitView(BotAPIView):
+    """
+    POST /api/v1/tickets/<pk>/split/ — житель заговорил о другой проблеме.
+
+    Поля: from_message_id (сообщение жителя, с которого началась новая
+    тема), title (необязательно). Сообщения с этого места переезжают в
+    новую заявку (см. tickets/lifecycle.py); старая остаётся в работе.
+    Ответ: {ticket_id, number} новой заявки.
+    """
+
+    def post(self, request, pk: int):
+        ticket = Ticket.objects.filter(pk=pk).first()
+        if ticket is None:
+            return Response({"detail": "Заявка не найдена"}, status=404)
+        message_id = _int_or_none(request.data.get("from_message_id"))
+        message = ticket.messages.filter(pk=message_id).first() if message_id else None
+        if message is None:
+            return Response({"detail": "from_message_id не найдено в этой заявке"}, status=400)
+        try:
+            new = split_ticket(ticket, message, title=(request.data.get("title") or ""))
+        except SplitError as e:
+            return Response({"detail": str(e)}, status=409)
+        return Response({"ticket_id": new.pk, "number": new.number})
 
 class HistoryView(BotAPIView):
     """GET /api/v1/tickets/<pk>/history/?limit=20 — переписка для контекста ИИ."""

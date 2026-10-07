@@ -1,39 +1,25 @@
 """
 python manage.py geocode — превратить адреса заявок в точки на карте.
 
-Использует бесплатный геокодер Nominatim (OpenStreetMap). Правила сервиса:
-не чаще одного запроса в секунду — поэтому команда нетороплива и её
-запускают руками или по расписанию, а не на каждую заявку.
-Нераспознанные адреса помечаются, чтобы не спрашивать про них снова.
+Новые заявки получают точку сами: адрес из переписки уходит в фоновую очередь
+(reports.geocoding.schedule_geocode). Эта команда — «догонялка» для всего,
+что осталось без точки: заявки, пришедшие, пока сеть была недоступна, или до
+того, как автоматика появилась. Берёт заявки без координат, у которых есть
+адрес или населённый пункт, и разбирает их тем же геокодером
+(reports.geocoding.geocode_ticket): тот же каскад, тот же кэш, та же пауза
+между запросами (правило Nominatim — не чаще раза в секунду), поэтому команда
+нетороплива. Нераспознанные адреса помечаются и повторно не спрашиваются,
+пока адрес не изменится (или не указан --retry-failed).
 """
 
-import time
-
-import httpx
 from django.core.management.base import BaseCommand
+from django.db.models import Q
 
+from reports import geocoding
+# Рамка области и проверка по ней жили здесь раньше; оставлены под старым
+# именем — на них могут ссылаться внешние скрипты.
+from reports.geocoding import LAT_MAX, LAT_MIN, LON_MAX, LON_MIN, inside_region  # noqa: F401
 from tickets.models import Ticket
-
-# Подсказка геокодеру, где искать: без региона он найдёт улицу где угодно.
-# Раньше здесь стоял город Джалал-Абад — годилось, пока бот обслуживал
-# только его. Теперь аппарат ведёт всю область, и адреса приходят из
-# райцентров и сёл по всей области («Кашка-Терек» и т.п.), а не только
-# из областного центра — суффикс и рамку расширили до области целиком.
-REGION_SUFFIX = ", Джалал-Абадская область, Кыргызстан"
-MARK_FAILED = -1000.0  # lat=MARK_FAILED значит «пробовали, не нашлось»
-
-# Границы Джалал-Абадской области (с запасом). Нужны дважды, и оба раза
-# по делу: 1) передаём геокодеру как рамку поиска (viewbox + bounded);
-# 2) проверяем результат сами — рамку сервис иногда игнорирует.
-# Без этой проверки адрес мог найтись в другой области или в Узбекистане,
-# и заявка вставала на карте не там. Пустая карта лучше, чем врущая.
-LAT_MIN, LAT_MAX = 40.0, 42.6
-LON_MIN, LON_MAX = 70.8, 74.6
-
-
-def inside_region(lat: float, lon: float) -> bool:
-    """Точка попала в границы области?"""
-    return LAT_MIN <= lat <= LAT_MAX and LON_MIN <= lon <= LON_MAX
 
 
 class Command(BaseCommand):
@@ -41,72 +27,56 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--limit", type=int, default=25,
-                            help="Сколько адресов обработать за запуск")
+                            help="Сколько заявок обработать за запуск")
+        parser.add_argument("--retry-failed", action="store_true",
+                            help="Спросить заново и те, у кого адрес прежде не распознался")
 
-    def _ask(self, client, address: str) -> list:
-        """Спросить геокодер, с одной повторной попыткой.
+    def _candidates(self, limit: int, retry_failed: bool) -> list:
+        """Заявки, про которые сервис действительно стоит спрашивать.
 
-        Первый запрос иногда обрывается на ровном месте — не разогрет DNS,
-        моргнула сеть. Из-за одной такой осечки команда раньше прекращала
-        работу и писала «сеть недоступна», хотя со второго раза всё находилось.
+        Отбор в Python, а не в SQL: «адрес изменился после неудачи» — это
+        сравнение строки запроса, и считать его должен тот же код, что решает
+        в самом геокодере. Иначе нераспознанные заявки забивали бы лимит,
+        а команда ничего бы не делала.
         """
-        for attempt in (1, 2):
-            try:
-                response = client.get(
-                    "https://nominatim.openstreetmap.org/search",
-                    params={
-                        "q": address + REGION_SUFFIX,
-                        "format": "json", "limit": 1,
-                        "countrycodes": "kg",
-                        # Рамка поиска: левый-верхний и правый-нижний углы.
-                        "viewbox": f"{LON_MIN},{LAT_MAX},{LON_MAX},{LAT_MIN}",
-                        "bounded": 1,
-                    },
-                )
-                return response.json() if response.status_code == 200 else []
-            except (httpx.HTTPError, ValueError):
-                if attempt == 2:
-                    raise
-                time.sleep(2)
-        return []
+        qs = (Ticket.objects.filter(lat__isnull=True)
+              .exclude(geo_source__in=geocoding.HUMAN_SOURCES)
+              .filter(Q(address__gt="") | Q(settlement__gt=""))
+              .select_related("district").order_by("-created_at"))
+        picked = []
+        for ticket in qs.iterator():
+            if geocoding.needs_geocoding(ticket, force=retry_failed):
+                picked.append(ticket)
+                if len(picked) >= limit:
+                    break
+        return picked
 
     def handle(self, *args, **options):
-        tickets = (Ticket.objects.filter(lat__isnull=True)
-                   .exclude(address="")[:options["limit"]])
+        tickets = self._candidates(options["limit"], options["retry_failed"])
         if not tickets:
             self.stdout.write("Нечего геокодировать.")
             return
 
-        found = failed = 0
-        with httpx.Client(
-            headers={"User-Agent": "manas-crm/1.0 (city hall panel)"},
-            timeout=15,
-        ) as client:
-            for ticket in tickets:
-                try:
-                    rows = self._ask(client, ticket.address)
-                except (httpx.HTTPError, ValueError):
-                    self.stderr.write("Сеть недоступна — попробуй позже.")
-                    break
-                lat = lon = None
-                if rows:
-                    lat, lon = float(rows[0]["lat"]), float(rows[0]["lon"])
-                    if not inside_region(lat, lon):
-                        # Нашлось, но не в нашей области — доверять нельзя.
-                        self.stdout.write(
-                            f"  {ticket.number}: «{ticket.address}» нашлось за "
-                            f"пределами области ({lat:.3f}, {lon:.3f}) — пропускаю")
-                        lat = lon = None
-
-                if lat is not None:
-                    ticket.lat, ticket.lon = lat, lon
-                    found += 1
+        by_address = by_settlement = failed = 0
+        for ticket in tickets:
+            outcome = geocoding.run_geocoding(ticket, force=options["retry_failed"])
+            if outcome == geocoding.ERROR:
+                self.stderr.write("Сеть недоступна — попробуй позже.")
+                break
+            if outcome == geocoding.FOUND:
+                if ticket.geo_source == Ticket.GeoSource.ADDRESS:
+                    by_address += 1
                 else:
-                    ticket.lat = MARK_FAILED  # больше не спрашиваем
-                    ticket.lon = MARK_FAILED
-                    failed += 1
-                ticket.save(update_fields=["lat", "lon"])
-                time.sleep(1.1)  # правило Nominatim: ≤1 запроса в секунду
+                    by_settlement += 1
+                self.stdout.write(
+                    f"  {ticket.number}: {ticket.get_geo_source_display()} "
+                    f"({ticket.lat:.4f}, {ticket.lon:.4f})")
+            elif outcome == geocoding.NOT_FOUND:
+                failed += 1
+                self.stdout.write(f"  {ticket.number}: адрес не распознан "
+                                  f"«{geocoding.build_query(ticket)}»")
 
         self.stdout.write(self.style.SUCCESS(
-            f"Найдено координат: {found}, не распознано: {failed}."))
+            f"Найдено координат: {by_address + by_settlement} "
+            f"(по адресу: {by_address}, по населённому пункту: {by_settlement}), "
+            f"не распознано: {failed}."))

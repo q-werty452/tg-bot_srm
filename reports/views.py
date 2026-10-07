@@ -2,19 +2,24 @@
 reports/views.py — статистика, карта и выгрузка в Excel.
 
 Графики статистики — SVG и CSS, без внешних библиотек: панель обязана
-работать без интернета. Единственное исключение — карта: ей нужны тайлы
-OpenStreetMap из сети, о чём страница честно предупреждает.
+работать без интернета. Единственное исключение — карта: ей нужны векторные
+тайлы OpenFreeMap и библиотека MapLibre из сети, о чём страница честно
+предупреждает. Сама страница карты отдаёт каркас и настройки, а точки
+приходят отдельным JSON-запросом (map_data) — так фильтры на карте работают
+без перезагрузки страницы.
 """
 
-import json
 import math
+import re
 from datetime import timedelta
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render
+from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.cache import never_cache
 
 from directory.models import Category, District
 from tickets.models import Channel, Message, Ticket
@@ -219,21 +224,20 @@ def _filtered_tickets(request):
         qs = qs.overdue()
     elif status in Ticket.Status.values:
         qs = qs.filter(status=status)
-    if request.GET.get("category", "").isdigit():
-        qs = qs.filter(category_id=request.GET["category"])
-    if request.GET.get("district", "").isdigit():
-        qs = qs.filter(district_id=request.GET["district"])
+    # Дашборд передаёт slug, старые ссылки на выгрузку — числовой id: понимаем оба.
+    for param, field in (("category", "category"), ("district", "district")):
+        value = request.GET.get(param, "").strip()
+        if value.isdigit():
+            qs = qs.filter(**{f"{field}_id": value})
+        elif value:
+            qs = qs.filter(**{f"{field}__slug": value})
     channel = request.GET.get("channel", "")
     if channel in Channel.values:
         qs = qs.filter(channel=channel)
-    q = request.GET.get("q", "").strip()
-    if q:
-        qs = qs.filter(Q(number__icontains=q) | Q(title__icontains=q)
-                       | Q(description__icontains=q) | Q(address__icontains=q)
-                       | Q(citizen__first_name__icontains=q)
-                       | Q(citizen__last_name__icontains=q)
-                       | Q(citizen__phone__icontains=q))
-    return qs.order_by("-created_at")
+    kind = request.GET.get("kind", "")
+    if kind in Ticket.Kind.values:
+        qs = qs.filter(kind=kind)
+    return qs.search(request.GET.get("q", "")).order_by("-created_at")
 
 
 @login_required
@@ -245,9 +249,10 @@ def export_xlsx(request):
     wb = Workbook()
     ws = wb.active
     ws.title = "Обращения"
-    headers = ["Номер", "Канал", "Создана", "Заголовок", "Категория", "Район", "Адрес",
+    headers = ["Номер", "Канал", "Создана", "Заголовок", "Тип обращения", "Категория",
+               "Район", "Населённый пункт", "Адрес",
                "Статус", "Просрочена", "Исполнитель", "Ответственный",
-               "Житель", "Телефон", "Кто отвечает"]
+               "Житель", "Фамилия", "Имя", "Отчество", "Телефон", "Кто отвечает"]
     ws.append(headers)
 
     for t in _filtered_tickets(request):
@@ -256,14 +261,19 @@ def export_xlsx(request):
             t.get_channel_display(),
             timezone.localtime(t.created_at).strftime("%d.%m.%Y %H:%M"),
             t.title,
+            t.get_kind_display(),
             t.category.name if t.category else "",
             t.district.name if t.district else "",
+            t.settlement,
             t.address,
             t.get_status_display(),
             "да" if t.is_overdue else "",
             str(t.executor) if t.executor else "",
             str(t.assignee) if t.assignee else "",
             str(t.citizen),
+            t.citizen.last_name,
+            t.citizen.first_name,
+            t.citizen.middle_name,
             t.citizen.phone,
             t.get_answer_mode_display(),
         ])
@@ -283,19 +293,187 @@ def export_xlsx(request):
     return response
 
 
+# ------------------------------------------------------------------ карта
+
+# Подписи точности точки для попапа: от них зависит, насколько точке верить.
+GEO_ACCURACY = {
+    Ticket.GeoSource.ADDRESS: "точный адрес",
+    Ticket.GeoSource.SETTLEMENT: "примерно — по населённому пункту",
+    Ticket.GeoSource.PIN: "геометка жителя",
+    Ticket.GeoSource.MANUAL: "поставил сотрудник",
+}
+
+MAP_STATUSES = (("open", "Открытые"), ("all", "Все"), ("overdue", "Просроченные"))
+MAP_PERIODS = (("7", "7 дней"), ("30", "30 дней"), ("90", "90 дней"), ("all", "Всё время"))
+MAP_MAX_POINTS = 5000  # потолок точек в одном ответе: больше карта всё равно не покажет
+DEFAULT_POINT_COLOR = "#8B96A8"  # заявка без категории
+HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _map_filters(request) -> dict:
+    """Фильтры карты из строки запроса; всё непонятное — значение по умолчанию."""
+    get = request.GET
+    focus = get.get("ticket", "").strip()[:12]
+    # Ссылка «На карте» из карточки ведёт на конкретную заявку. Она может быть
+    # закрытой или старой, и фильтры по умолчанию спрятали бы её точку.
+    status_default = "all" if focus else "open"
+    status, period, kind = get.get("status", ""), get.get("period", ""), get.get("kind", "")
+    return {
+        "status": status if status in dict(MAP_STATUSES) else status_default,
+        "period": period if period in dict(MAP_PERIODS) else "all",
+        "category": get.get("category", "").strip()[:60],
+        "district": get.get("district", "").strip()[:60],
+        "kind": kind if kind in Ticket.Kind.values else "",
+        "ticket": focus,
+    }
+
+
+def _map_tickets(f: dict, *, ignore_district: bool = False):
+    """Заявки под фильтры карты. ignore_district — для счётчиков по районам:
+    чтобы при выбранном районе подписи на остальных не обнулялись."""
+    qs = Ticket.objects.all()
+    if f["status"] == "open":
+        qs = qs.open()
+    elif f["status"] == "overdue":
+        qs = qs.overdue()
+    # Карта передаёт slug; число понимаем как id — как и выгрузка в Excel.
+    for key in ("category",) if ignore_district else ("category", "district"):
+        value = f[key]
+        if value.isdigit():
+            qs = qs.filter(**{f"{key}_id": value})
+        elif value:
+            qs = qs.filter(**{f"{key}__slug": value})
+    if f["kind"]:
+        qs = qs.filter(kind=f["kind"])
+    days = {"7": 7, "30": 30, "90": 90}.get(f["period"])
+    if days:
+        qs = qs.filter(created_at__gte=timezone.now() - timedelta(days=days))
+    return qs
+
+
+def _map_totals(qs) -> dict:
+    """Счётчики «на карте / без координат» одним запросом."""
+    totals = qs.aggregate(
+        on_map=Count("id", filter=Q(lat__isnull=False)),
+        without=Count("id", filter=Q(lat__isnull=True)),
+        no_address=Count("id", filter=Q(lat__isnull=True, address="", settlement="")),
+        failed=Count("id", filter=Q(lat__isnull=True,
+                                    geo_source=Ticket.GeoSource.FAILED)),
+    )
+    return {"on_map": totals["on_map"], "without_coords": totals["without"],
+            "no_address": totals["no_address"], "failed": totals["failed"]}
+
+
+def _map_feature(t: Ticket) -> dict:
+    """Точка заявки для карты: GeoJSON-фича со всем, что нужно попапу."""
+    category = t.category
+    color = category.color if category and HEX_COLOR.match(category.color or "") \
+        else DEFAULT_POINT_COLOR
+    return {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [round(t.lon, 6), round(t.lat, 6)]},
+        "properties": {
+            "number": t.number,
+            "title": t.title or "Без темы",
+            "status": t.status,
+            "status_label": t.get_status_display(),
+            "overdue": int(t.is_overdue),
+            "category": category.name if category else "",
+            "color": color,
+            "citizen": str(t.citizen),
+            "district": t.district.name if t.district else "",
+            "settlement": t.settlement,
+            "address": t.address,
+            "created": timezone.localtime(t.created_at).strftime("%d.%m.%Y %H:%M"),
+            "geo": t.geo_source,
+            "accuracy": GEO_ACCURACY.get(t.geo_source, ""),
+            "approx": int(t.geo_source == Ticket.GeoSource.SETTLEMENT),
+            "pin": int(t.geo_source == Ticket.GeoSource.PIN),
+        },
+    }
+
+
+def _focus_info(number: str):
+    """Что известно про заявку из ссылки /map/?ticket=… (None — ссылки нет)."""
+    if not number:
+        return None
+    t = Ticket.objects.filter(number=number).first()
+    if t is None:
+        return {"number": number, "exists": False, "on_map": False}
+    return {"number": t.number, "exists": True, "on_map": t.lat is not None,
+            "place": t.address or t.settlement}
+
+
 @login_required
 def tickets_map(request):
-    """Карта обращений. Точки — заявки, у которых определены координаты."""
-    points = [
-        {"lat": t.lat, "lon": t.lon, "number": t.number, "title": t.title,
-         "status": t.get_status_display(), "overdue": t.is_overdue}
-        for t in Ticket.objects.filter(lat__isnull=False, lon__isnull=False)
-                                .exclude(lat__lt=-90)  # -1000 = «адрес не распознан»
-                                .select_related("category")
-    ]
-    without = Ticket.objects.filter(lat__isnull=True).exclude(address="").count()
+    """Страница карты: каркас, фильтры и настройки. Точки грузит JS из map_data."""
+    f = _map_filters(request)
+    focus = _focus_info(f["ticket"])
+    categories = list(Category.objects.filter(is_active=True))
+    # Только территории области (районы и города), а не прежние микрорайоны.
+    districts = list(District.objects.filter(is_active=True).exclude(kind=""))
+    config = {
+        "dataUrl": reverse("map_data"),
+        # Шаблон ссылки на карточку: JS подставляет номер вместо __N__.
+        "ticketUrl": reverse("ticket_detail", args=["__N__"]),
+        "filters": f,
+        "focus": focus,
+        "districts": [{"slug": d.slug, "name": d.name, "kind": d.kind} for d in districts],
+        "categories": [{"slug": c.slug, "name": c.name,
+                        "color": c.color if HEX_COLOR.match(c.color or "") else DEFAULT_POINT_COLOR}
+                       for c in categories],
+    }
     return render(request, "map.html", {
-        "section": "map", "points": points,
-        "points_json": json.dumps(points, ensure_ascii=False),
-        "without_coords": without,
+        "section": "map", "f": f, "focus": focus, "config": config,
+        "categories": categories, "districts": districts,
+        "kinds": Ticket.Kind.choices, "statuses": MAP_STATUSES, "periods": MAP_PERIODS,
+        "totals": _map_totals(_map_tickets(f)),
     })
+
+
+@never_cache
+@login_required
+def map_data(request):
+    """Точки карты под фильтры — GeoJSON плюс счётчики в поле meta.
+
+    Запросов к базе всегда одно и то же число, сколько бы ни было заявок:
+    точки (с категорией, районом и заявителем одним JOIN), общий счётчик
+    и счётчики по районам; ещё один — только если запрошена заявка из ссылки.
+    """
+    f = _map_filters(request)
+    base = _map_tickets(f)
+
+    rows = list(
+        base.filter(lat__isnull=False, lon__isnull=False)
+        .select_related("category", "district", "citizen")
+        .defer("description", "last_message_preview")
+        .order_by("-created_at")[:MAP_MAX_POINTS + 1]
+    )
+    truncated = len(rows) > MAP_MAX_POINTS
+    rows = rows[:MAP_MAX_POINTS]
+
+    focus = None
+    if f["ticket"]:
+        # Заявка из ссылки видна на карте, даже если фильтры её исключают.
+        extra = (Ticket.objects.filter(number=f["ticket"])
+                 .select_related("category", "district", "citizen")
+                 .defer("description", "last_message_preview").first())
+        focus = {"number": f["ticket"], "exists": extra is not None,
+                 "on_map": bool(extra and extra.lat is not None)}
+        if focus["on_map"] and all(r.pk != extra.pk for r in rows):
+            rows.append(extra)
+
+    district_counts = dict(
+        _map_tickets(f, ignore_district=True).exclude(district=None)
+        .values_list("district__slug").annotate(n=Count("id"))
+    )
+    return JsonResponse({
+        "type": "FeatureCollection",
+        "features": [_map_feature(t) for t in rows],
+        "meta": {
+            **_map_totals(base),
+            "shown": len(rows), "truncated": truncated, "limit": MAP_MAX_POINTS,
+            "district_counts": district_counts,
+            "filters": f, "focus": focus,
+        },
+    }, json_dumps_params={"ensure_ascii": False})

@@ -2,7 +2,7 @@
 {% if page.object_list %}
 <table class="list">
   <thead><tr>
-    <th></th><th>Заявка</th><th>Категория</th><th>Адрес</th><th>Район</th>
+    <th></th><th>Заявка</th><th>Заявитель</th><th>Категория</th><th>Место</th>
     <th>Статус</th><th>Создана</th><th>Исполнитель</th>
   </tr></thead>
   <tbody>
@@ -21,16 +21,26 @@
       </td>
       <td class="title-cell">
         <span class="num">{% if t.unread %}<span class="dot-unread"></span>{% endif %}#{{ t.number }}</span>
-        <span class="badge chan-{{ t.channel }}">{{ t.get_channel_display }}</span><br>
+        <span class="badge chan-{{ t.channel }}">{{ t.get_channel_display }}</span>
+        {% if t.kind %}<span class="badge kind-{{ t.kind }}">{{ t.get_kind_display }}</span>{% endif %}<br>
         <a href="{% url 'ticket_detail' t.number %}">{{ t.title|default:"Без темы" }}</a>
         <small>{{ t.last_message_preview|default:t.description|truncatechars:60 }}</small>
+      </td>
+      <td class="small">
+        {{ t.citizen }}
+        {% if t.citizen.phone %}<br><small class="muted mono">{{ t.citizen.phone }}</small>{% endif %}
       </td>
       <td>{% if t.category %}
         <span class="chip" style="background:{{ t.category.color }}1A; color:{{ t.category.color }}">
           {{ t.category.name }}</span>
       {% else %}<span class="muted small">—</span>{% endif %}</td>
-      <td class="small">{{ t.address|default:"—" }}</td>
-      <td class="small">{{ t.district.name|default:"—" }}</td>
+      <td class="small">
+        {% if t.district or t.settlement or t.address %}
+          {% if t.district %}{{ t.district.name }}{% endif %}
+          {% if t.settlement %}{% if t.district %} · {% endif %}{{ t.settlement }}{% endif %}
+          {% if t.address %}{% if t.district or t.settlement %} · {% endif %}{{ t.address }}{% endif %}
+        {% else %}—{% endif %}
+      </td>
       <td>
         {% if t.is_overdue %}<span class="badge overdue">Просрочена</span>
         {% else %}<span class="badge st-{{ t.status }}">{{ t.get_status_display }}</span>{% endif %}

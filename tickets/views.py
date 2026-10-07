@@ -10,7 +10,6 @@ from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -33,14 +32,25 @@ EVENT_TEXTS = {
     "title": "изменён заголовок",
     "retitled": "тема уточнена автоматически",
     "address": "изменён адрес",
+    "settlement": "изменён населённый пункт",
+    "kind": "изменён тип обращения",
     "reply": "сотрудник ответил жителю",
     "manual": "заведена вручную",
+    "split": "переписка о другой проблеме вынесена в новую заявку",
+    "staff_notified": "ИИ распознал обращение, сотрудники уведомлены",
+    "citizen": "изменены данные жителя",
 }
 
 
 def _event_human(event: Event) -> str:
     base = EVENT_TEXTS.get(event.kind, event.kind)
     to = event.payload.get("to")
+    if event.kind == "status" and event.payload.get("by") == "consultation_idle":
+        return "справочный вопрос закрыт автоматически: житель долго не писал"
+    if event.kind == "created" and event.payload.get("split_from"):
+        return f"выделена из заявки #{event.payload['split_from']}: житель написал о другой проблеме"
+    if to and event.kind == "split":
+        return f"{base}: #{to}"
     if to and event.kind == "status":
         label = dict(Ticket.Status.choices).get(to, to)
         return f"{base}: {label}"
@@ -50,6 +60,22 @@ def _event_human(event: Event) -> str:
     if to:
         return f"{base}: {to}"
     return base
+
+
+def _executor_groups():
+    """Исполнители для выпадающего списка: группы по территории, внутри — по имени.
+
+    Исполнителей ~345, плоский список неудобен. Без территории (заведены
+    вручную) идут первой группой без заголовка.
+    """
+    groups = {}
+    for executor in Executor.objects.filter(is_active=True):
+        groups.setdefault(executor.territory, []).append(executor)
+    ordered = sorted(groups.items(), key=lambda item: (item[0] != "", item[0].lower()))
+    return [
+        (territory, sorted(items, key=lambda e: str(e).lower()))
+        for territory, items in ordered
+    ]
 
 
 @login_required
@@ -63,15 +89,9 @@ def dashboard(request):
         "category": request.GET.get("category", "").strip(),
         "district": request.GET.get("district", "").strip(),
         "channel": request.GET.get("channel", "").strip(),
+        "kind": request.GET.get("kind", "").strip(),
     }
-    if f["q"]:
-        qs = qs.filter(
-            Q(number__icontains=f["q"]) | Q(title__icontains=f["q"])
-            | Q(description__icontains=f["q"]) | Q(address__icontains=f["q"])
-            | Q(citizen__first_name__icontains=f["q"])
-            | Q(citizen__last_name__icontains=f["q"])
-            | Q(citizen__phone__icontains=f["q"])
-        )
+    qs = qs.search(f["q"])
     if f["status"] == "overdue":
         qs = qs.overdue()
     elif f["status"]:
@@ -82,6 +102,8 @@ def dashboard(request):
         qs = qs.filter(district__slug=f["district"])
     if f["channel"] in Channel.values:
         qs = qs.filter(channel=f["channel"])
+    if f["kind"] in Ticket.Kind.values:
+        qs = qs.filter(kind=f["kind"])
 
     today = timezone.localdate()
     all_tickets = Ticket.objects.all()
@@ -115,6 +137,7 @@ def dashboard(request):
         "categories": Category.objects.filter(is_active=True),
         "districts": District.objects.filter(is_active=True),
         "channels": Channel.choices,
+        "kinds": Ticket.Kind.choices,
     })
 
 
@@ -146,9 +169,13 @@ def ticket_detail(request, number: str):
         "statuses": Ticket.Status.choices,
         "categories": Category.objects.filter(is_active=True),
         "districts": District.objects.filter(is_active=True),
-        "executors": Executor.objects.filter(is_active=True),
+        "executor_groups": _executor_groups(),
+        "kinds": Ticket.Kind.choices,
         "staff": get_user_model().objects.filter(is_active=True),
         "whatsapp_window_open": whatsapp_window_open,
+        # Прошлые и параллельные обращения того же жителя — история рядом.
+        "citizen_tickets": ticket.citizen.tickets.exclude(pk=ticket.pk)
+                                         .order_by("-created_at")[:10],
     })
 
 
@@ -190,6 +217,23 @@ def ticket_action(request, number: str):
         log(user, "ответ жителю", f"#{ticket.number}", text[:120])
         destination = "WhatsApp" if ticket.channel == Channel.WHATSAPP else "Telegram"
         messages.success(request, f"Ответ поставлен в очередь — житель получит его в {destination}.")
+
+    elif action == "citizen":
+        # ФИО и телефон жителя правит сотрудник — после этого бот их не
+        # перетирает (name_confirmed: ФИО подтверждено).
+        citizen = ticket.citizen
+        changed = []
+        for field, limit in (("last_name", 120), ("first_name", 120),
+                             ("middle_name", 120), ("phone", 40)):
+            value = (request.POST.get(field) or "").strip()[:limit]
+            if value != getattr(citizen, field):
+                setattr(citizen, field, value)
+                changed.append(field)
+        if changed:
+            citizen.name_confirmed = True
+            citizen.save(update_fields=changed + ["name_confirmed"])
+            event("citizen", to=citizen.full_name or "—")
+            messages.success(request, "Данные жителя сохранены.")
 
     elif action == "mode":
         mode = request.POST.get("mode")
@@ -262,6 +306,24 @@ def ticket_action(request, number: str):
             event("address", to=address or "—")
             messages.success(request, "Адрес сохранён.")
 
+    elif action == "settlement":
+        settlement = (request.POST.get("settlement") or "").strip()[:150]
+        if settlement != ticket.settlement:
+            ticket.settlement = settlement
+            ticket.save(update_fields=["settlement", "updated_at"])
+            event("settlement", to=settlement or "—")
+            messages.success(request, "Населённый пункт сохранён.")
+
+    elif action == "kind":
+        kind = request.POST.get("kind", "")
+        if (kind == "" or kind in Ticket.Kind.values) and kind != ticket.kind:
+            ticket.kind = kind
+            ticket.save(update_fields=["kind", "updated_at"])
+            # Событие с пользователем — метка «тип правил человек»: бот после
+            # него тип больше не меняет (см. ClassifyView).
+            event("kind", to=dict(Ticket.Kind.choices).get(kind, "—"))
+            messages.success(request, "Тип обращения обновлён.")
+
     elif action == "note":
         text = (request.POST.get("text") or "").strip()
         if text:
@@ -271,6 +333,10 @@ def ticket_action(request, number: str):
     else:
         messages.error(request, "Неизвестное действие.")
 
+    # Сотрудник поправил место — заявка переедет на карте сама (фоном).
+    if action in ("address", "settlement", "district"):
+        from reports.geocoding import schedule_geocode
+        schedule_geocode(ticket.pk)
     return redirect("ticket_detail", number=number)
 
 

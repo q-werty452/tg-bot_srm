@@ -9,3 +9,6 @@ staticfiles/
 .idea/
 *.log
 crm_run.log
+
+# Резервные копии рабочей БД
+db.sqlite3.bak-*

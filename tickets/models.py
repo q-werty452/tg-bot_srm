@@ -59,6 +59,10 @@ class Citizen(models.Model):
     chat_id = models.BigIntegerField("chat id / номер телефона")
     first_name = models.CharField("имя", max_length=120, blank=True)
     last_name = models.CharField("фамилия", max_length=120, blank=True)
+    middle_name = models.CharField("отчество", max_length=120, blank=True)
+    # ФИО назвал сам житель (бот извлёк его из переписки), а не взято из
+    # ника мессенджера: подтверждённое имя профиль больше не перезаписывает.
+    name_confirmed = models.BooleanField("ФИО назвал сам житель", default=False)
     username = models.CharField("username", max_length=120, blank=True)
     phone = models.CharField("телефон", max_length=40, blank=True)
     district = models.ForeignKey(
@@ -86,9 +90,15 @@ class Citizen(models.Model):
             ),
         ]
 
+    @property
+    def full_name(self) -> str:
+        """«Фамилия Имя Отчество» — что есть; пусто, если ФИО нет вовсе."""
+        parts = (self.last_name, self.first_name, self.middle_name)
+        return " ".join(p for p in parts if p)
+
     def __str__(self):
-        name = f"{self.first_name} {self.last_name}".strip()
-        return name or (f"@{self.username}" if self.username else f"id{self.tg_user_id}")
+        return self.full_name or (
+            f"@{self.username}" if self.username else f"id{self.tg_user_id}")
 
 
 class TicketCounter(models.Model):
@@ -116,6 +126,21 @@ class TicketQuerySet(models.QuerySet):
         """Открытые заявки, у которых срок уже вышел."""
         return self.open().filter(due_at__lt=timezone.now())
 
+    def search(self, q: str):
+        """Поиск по списку: номер, текст, место и данные заявителя."""
+        q = (q or "").strip()
+        if not q:
+            return self
+        return self.filter(
+            Q(number__icontains=q) | Q(title__icontains=q)
+            | Q(description__icontains=q) | Q(address__icontains=q)
+            | Q(settlement__icontains=q)
+            | Q(citizen__first_name__icontains=q)
+            | Q(citizen__last_name__icontains=q)
+            | Q(citizen__middle_name__icontains=q)
+            | Q(citizen__phone__icontains=q)
+        )
+
 
 class Ticket(models.Model):
     """Карточка обращения."""
@@ -130,6 +155,21 @@ class Ticket(models.Model):
     class AnswerMode(models.TextChoices):
         AI = "ai", "Отвечает ИИ"
         STAFF = "staff", "Отвечает сотрудник"
+
+    class Kind(models.TextChoices):
+        APPEAL = "appeal", "Обращение/жалоба"
+        QUESTION = "question", "Справочный вопрос"
+        OTHER = "other", "Прочее"  # приветствие, непонятно что
+
+    class GeoSource(models.TextChoices):
+        """Откуда взялась точка на карте — от этого зависит, как ей верить."""
+
+        NONE = "", "нет"
+        ADDRESS = "address", "по адресу"
+        SETTLEMENT = "settlement", "по населённому пункту (примерно)"
+        PIN = "pin", "геометка жителя"
+        MANUAL = "manual", "поставил сотрудник"
+        FAILED = "failed", "адрес не распознан"
 
     number = models.CharField("номер", max_length=12, unique=True, editable=False)
     citizen = models.ForeignKey(
@@ -150,10 +190,23 @@ class Ticket(models.Model):
         "directory.District", verbose_name="район", null=True, blank=True,
         on_delete=models.SET_NULL, related_name="tickets",
     )
+    settlement = models.CharField("населённый пункт", max_length=150, blank=True)
     address = models.CharField("адрес", max_length=250, blank=True)
+    # Тип обращения определяет бот; пока сотрудник не менял его руками
+    # (событие «kind» от пользователя), бот вправе уточнять.
+    kind = models.CharField("тип обращения", max_length=16, choices=Kind.choices,
+                            blank=True, default="")
     # Координаты для карты; заполняются геокодером, могут быть пустыми.
+    # Пустые lat/lon — всегда «точки нет»: метки-заглушки вроде -1000 больше
+    # не используются, для «не нашлось» есть geo_source="failed".
     lat = models.FloatField("широта", null=True, blank=True)
     lon = models.FloatField("долгота", null=True, blank=True)
+    # Откуда точка и по какой строке её искали (см. reports/geocoding.py).
+    # Если адрес или населённый пункт поменяли и строка запроса стала другой,
+    # точку ищут заново; точку жителя или сотрудника автоматика не трогает.
+    geo_source = models.CharField("источник точки", max_length=16,
+                                  choices=GeoSource.choices, blank=True, default="")
+    geo_query = models.CharField("строка геокодирования", max_length=300, blank=True)
 
     status = models.CharField("статус", max_length=16, choices=Status.choices, default=Status.NEW)
     executor = models.ForeignKey(

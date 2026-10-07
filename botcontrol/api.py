@@ -183,16 +183,6 @@ class ConfigView(BotAPIView):
                 for qa in QuickAnswer.objects.filter(is_active=True)
             ],
             "facts": build_facts(),
-            # Категории и районы нужны боту для классификации обращений:
-            # ИИ выбирает slug строго из этих списков.
-            "categories": [
-                {"slug": c.slug, "name": c.name}
-                for c in Category.objects.filter(is_active=True)
-            ],
-            "districts": [
-                {"slug": d.slug, "name": d.name}
-                for d in District.objects.filter(is_active=True)
-            ],
         })
 
 

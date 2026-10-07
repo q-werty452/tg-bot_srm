@@ -164,23 +164,33 @@ class IncomingWhatsAppTests(APITestCase):
 @override_settings(BOT_API_TOKEN=TOKEN, MEDIA_ROOT=MEDIA,
                    STAFF_CHAT_ID="-100200")
 class NotifyTests(APITestCase):
-    def test_new_ticket_creates_staff_notification(self):
+    def _incoming(self, **data):
+        return self.client.post("/api/v1/tickets/incoming/", data, **HDR).json()
+
+    def test_staff_notified_when_bot_recognises_appeal(self):
         from botcontrol.models import Outbox
-        self.client.post("/api/v1/tickets/incoming/",
-                         {"tg_user_id": 1, "text": "Прорвало трубу"}, **HDR)
+        r = self._incoming(tg_user_id=1, text="Здравствуйте")
+        # «здравствуйте» и справочные вопросы служебный чат не будят
+        self.assertFalse(Outbox.objects.filter(kind="notify").exists())
+        self.client.post(f"/api/v1/tickets/{r['ticket_id']}/classify/",
+                         {"kind": "question"}, format="json", **HDR)
+        self.assertFalse(Outbox.objects.filter(kind="notify").exists())
+        self.client.post(f"/api/v1/tickets/{r['ticket_id']}/classify/",
+                         {"kind": "appeal", "title": "Прорвало трубу",
+                          "description": "Во дворе прорвало трубу"}, format="json", **HDR)
         row = Outbox.objects.get(kind="notify")
         self.assertEqual(row.chat_id, -100200)
         self.assertIn("Прорвало трубу", row.text)
-        # второе сообщение в ту же заявку — без второго уведомления
-        self.client.post("/api/v1/tickets/incoming/",
-                         {"tg_user_id": 1, "text": "и ещё"}, **HDR)
+        # повторная классификация — без второго уведомления
+        self.client.post(f"/api/v1/tickets/{r['ticket_id']}/classify/",
+                         {"kind": "appeal"}, format="json", **HDR)
         self.assertEqual(Outbox.objects.filter(kind="notify").count(), 1)
 
     def test_staff_notification_always_telegram_even_for_whatsapp_ticket(self):
         from botcontrol.models import Outbox
-        self.client.post("/api/v1/tickets/incoming/",
-                         {"channel": "whatsapp", "chat_id": 996700123456,
-                          "text": "Прорвало трубу"}, **HDR)
+        r = self._incoming(channel="whatsapp", chat_id=996700123456, text="Прорвало трубу")
+        self.client.post(f"/api/v1/tickets/{r['ticket_id']}/classify/",
+                         {"kind": "appeal"}, format="json", **HDR)
         row = Outbox.objects.get(kind="notify")
         self.assertEqual(row.channel, Channel.TELEGRAM)
 

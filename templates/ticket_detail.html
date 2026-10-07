@@ -124,6 +124,16 @@
         </select>
       </form>
       <form method="post" action="{% url 'ticket_action' t.number %}" class="inline-field">
+        {% csrf_token %}<input type="hidden" name="action" value="kind">
+        <label>Тип обращения</label>
+        <select name="kind" onchange="this.form.submit()">
+          <option value="">—</option>
+          {% for value, label in kinds %}
+            <option value="{{ value }}" {% if t.kind == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <form method="post" action="{% url 'ticket_action' t.number %}" class="inline-field">
         {% csrf_token %}<input type="hidden" name="action" value="category">
         <label>Категория</label>
         <select name="category" onchange="this.form.submit()">
@@ -144,8 +154,17 @@
         </select>
       </form>
       <form method="post" action="{% url 'ticket_action' t.number %}" class="inline-field">
+        {% csrf_token %}<input type="hidden" name="action" value="settlement">
+        <label>Населённый пункт</label>
+        <div style="display:flex; gap:8px">
+          <input type="text" name="settlement" value="{{ t.settlement }}" maxlength="150">
+          <button class="btn ghost small"><svg class="i"><use href="{% static 'icons.svg' %}#check"/></svg></button>
+        </div>
+      </form>
+      <form method="post" action="{% url 'ticket_action' t.number %}" class="inline-field">
         {% csrf_token %}<input type="hidden" name="action" value="address">
-        <label>Адрес</label>
+        <label{% if t.lat is not None and t.lon is not None %} style="display:flex; justify-content:space-between; align-items:baseline"{% endif %}>Адрес
+          {% if t.lat is not None and t.lon is not None %}<a href="{% url 'tickets_map' %}?ticket={{ t.number }}">На карте</a>{% endif %}</label>
         <div style="display:flex; gap:8px">
           <input type="text" name="address" value="{{ t.address }}" maxlength="250">
           <button class="btn ghost small"><svg class="i"><use href="{% static 'icons.svg' %}#check"/></svg></button>
@@ -158,15 +177,59 @@
       {% endif %}
     </div>
 
+    {% comment %}
+      Мини-карта: точка заявки и белая пелена за границей области (те же
+      MapLibre и подложка, что у большой карты; static/map/minimap.js).
+      Библиотеку грузим только когда есть что показывать.
+    {% endcomment %}
+    {% if t.lat is not None and t.lon is not None %}
+    <div class="card" id="ticket-geo">
+      <h3>Место на карте</h3>
+      <div id="ticket-minimap" class="minimap" role="img" aria-label="Мини-карта: место заявки"
+           data-lat="{{ t.lat|stringformat:'.6f' }}" data-lon="{{ t.lon|stringformat:'.6f' }}"
+           data-source="{{ t.geo_source }}" data-color="{{ t.category.color|default:'#2F6BDE' }}"
+           data-overdue="{% if t.is_overdue %}1{% endif %}"
+           data-region-url="{% static 'geo/jalalabad_region.geojson' %}"></div>
+      <p class="minimap-note muted small">Точность:
+        {% if t.geo_source == 'settlement' %}примерно — по населённому пункту{% elif t.geo_source == 'pin' %}геометка жителя{% elif t.geo_source == 'manual' %}поставил сотрудник{% elif t.geo_source == 'address' %}точный адрес{% else %}координаты указаны в карточке{% endif %}.</p>
+      <a class="btn ghost small" href="{% url 'tickets_map' %}?ticket={{ t.number }}">На большой карте</a>
+    </div>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
+          integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous">
+    <link rel="stylesheet" href="{% static 'map/map.css' %}">
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" defer
+            integrity="sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj" crossorigin="anonymous"></script>
+    <script src="{% static 'map/map-common.js' %}" defer></script>
+    <script src="{% static 'map/minimap.js' %}" defer></script>
+    {% elif t.address or t.settlement %}
+    <div class="card">
+      <h3>Место на карте</h3>
+      <p class="muted small" style="margin:0">Адрес ещё не найден на карте.
+        {% if t.geo_source == 'failed' %}Он не распознан: проверьте, как записаны адрес и населённый пункт, — после правки точка определится сама.{% endif %}</p>
+    </div>
+    {% endif %}
+
     <div class="card">
       <h3>Исполнение</h3>
       <form method="post" action="{% url 'ticket_action' t.number %}" class="inline-field">
         {% csrf_token %}<input type="hidden" name="action" value="executor">
         <label>Исполнитель (МП)</label>
-        <select name="executor" onchange="this.form.submit()">
+        {% comment %}
+          Организаций около 350: сверху поле быстрого поиска по названию
+          (фильтрует пункты на месте, без библиотек), ниже — список,
+          сгруппированный по территории.
+        {% endcomment %}
+        <input type="search" id="executor-filter" placeholder="Найти организацию…"
+               autocomplete="off" style="margin-bottom:6px">
+        <select name="executor" id="executor-select" onchange="this.form.submit()">
           <option value="">—</option>
-          {% for e in executors %}
-            <option value="{{ e.id }}" {% if t.executor_id == e.id %}selected{% endif %}>{{ e }}</option>
+          {% for territory, items in executor_groups %}
+            {% if territory %}<optgroup label="{{ territory }}">{% endif %}
+            {% for e in items %}
+              <option value="{{ e.id }}" title="{{ e.name }}"
+                      {% if t.executor_id == e.id %}selected{% endif %}>{{ e|truncatechars:90 }}</option>
+            {% endfor %}
+            {% if territory %}</optgroup>{% endif %}
           {% endfor %}
         </select>
       </form>
@@ -184,10 +247,33 @@
 
     <div class="card">
       <h3>Житель</h3>
-      <div class="kv"><span>Имя</span><b>{{ t.citizen }}</b></div>
+      <div class="kv"><span>{% if t.citizen.full_name %}ФИО{% else %}Имя{% endif %}</span>
+        <b>{{ t.citizen }}</b></div>
+      {% if t.citizen.full_name and not t.citizen.name_confirmed %}
+        <p class="muted small" style="margin:-4px 0 8px">Взято из профиля мессенджера, не от жителя.</p>
+      {% endif %}
+      {% if t.citizen.middle_name %}<div class="kv"><span>Отчество</span><span>{{ t.citizen.middle_name }}</span></div>{% endif %}
       {% if t.citizen.username %}<div class="kv"><span>Telegram</span><span>@{{ t.citizen.username }}</span></div>{% endif %}
       {% if t.citizen.phone %}<div class="kv"><span>Телефон</span><span class="mono">{{ t.citizen.phone }}</span></div>{% endif %}
       <div class="kv"><span>Обращений</span><span>{{ t.citizen.tickets.count }}</span></div>
+      <details style="margin-top:8px">
+        <summary class="small">Исправить ФИО и телефон</summary>
+        <form method="post" action="{% url 'ticket_action' t.number %}" style="margin-top:8px">
+          {% csrf_token %}<input type="hidden" name="action" value="citizen">
+          <input name="last_name" value="{{ t.citizen.last_name }}" placeholder="Фамилия" class="mb">
+          <input name="first_name" value="{{ t.citizen.first_name }}" placeholder="Имя" class="mb">
+          <input name="middle_name" value="{{ t.citizen.middle_name }}" placeholder="Отчество" class="mb">
+          <input name="phone" value="{{ t.citizen.phone }}" placeholder="Телефон" class="mb">
+          <button class="btn btn-sm" type="submit">Сохранить</button>
+        </form>
+      </details>
+      {% if citizen_tickets %}
+        <h4 style="margin:12px 0 6px">Другие обращения</h4>
+        {% for o in citizen_tickets %}
+          <div class="kv"><a href="{% url 'ticket_detail' o.number %}">#{{ o.number }}</a>
+            <span class="small">{{ o.title|truncatechars:34 }} · {{ o.get_status_display }}</span></div>
+        {% endfor %}
+      {% endif %}
     </div>
 
     <div class="card">
@@ -201,4 +287,29 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* Быстрый поиск в списке организаций: скрываем пункты, не подходящие под
+   введённый текст (и целые группы, если в них ничего не осталось).
+   Выбранный сейчас пункт остаётся виден всегда. */
+(function () {
+  const input = document.getElementById("executor-filter");
+  const select = document.getElementById("executor-select");
+  if (!input || !select) return;
+  input.addEventListener("input", () => {
+    const needle = input.value.trim().toLowerCase();
+    for (const option of select.options) {
+      if (!option.value) continue;
+      const show = !needle || option.selected
+        || (option.title + " " + option.textContent).toLowerCase().includes(needle);
+      option.hidden = option.disabled = !show;
+    }
+    for (const group of select.querySelectorAll("optgroup")) {
+      group.hidden = !Array.from(group.children).some(o => !o.hidden);
+    }
+  });
+})();
+</script>
 {% endblock %}
