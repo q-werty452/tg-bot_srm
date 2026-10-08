@@ -7,15 +7,13 @@ tickets/lifecycle.py — когда сообщение жителя продол
 потому, что житель какое-то время не писал. Закрыть «как выполненную» без
 сотрудника можно только то, что и правда исчерпано без него:
 
-1. Справочный вопрос или приветствие (kind = question / other), на которые
-   ответил бот, если житель молчал дольше CONSULTATION_IDLE_HOURS и никто
-   из сотрудников к заявке не прикасался. Следующее сообщение после такой
-   паузы — уже новая заявка со своей темой.
-2. Обращение (kind = appeal) продолжается, сколько бы времени ни прошло:
-   «когда починят?» через неделю — это та же жалоба. Если же житель пишет
-   о ДРУГОЙ проблеме, бот по смыслу переписки просит разделить заявку
-   (split_ticket): сообщения с этого места уходят в новую карточку, а
-   старая остаётся в работе у отдела.
+1. После паузы дольше CONSULTATION_IDLE_HOURS новое сообщение — всегда
+   новая заявка со своей темой (прошлые видны в карточке жителя).
+2. Старая при этом закрывается, только если это не жалоба и сотрудники к
+   ней не прикасались (справочный вопрос, приветствие). Жалоба остаётся
+   открытой в работе — её никто не решил.
+3. Если в живом разговоре житель пишет о ДРУГОЙ проблеме, бот по смыслу
+   переписки просит разделить заявку (split_ticket).
 """
 
 from datetime import timedelta
@@ -30,20 +28,17 @@ from tickets.models import Event, Message, Ticket
 CONSULTATION_IDLE_HOURS = 12
 
 
-def _is_idle_consultation(ticket: Ticket) -> bool:
-    """Справочная заявка, которую можно тихо закрыть: бот ответил, люди не вмешивались."""
-    if ticket.kind not in (Ticket.Kind.QUESTION, Ticket.Kind.OTHER):
-        return False
-    if ticket.answer_mode != Ticket.AnswerMode.AI or ticket.assignee_id:
-        return False
-    # Любое действие сотрудника (статус, исполнитель, ответ, правка) —
-    # значит, заявкой занимаются люди, и решать за них нельзя.
-    if ticket.events.filter(user__isnull=False).exists():
-        return False
-    if ticket.messages.filter(author=Message.Author.STAFF).exists():
-        return False
+def _is_idle(ticket: Ticket) -> bool:
+    """Житель молчал дольше CONSULTATION_IDLE_HOURS — следующее сообщение уже новый разговор."""
     last = ticket.last_message_at or ticket.created_at
     return timezone.now() - last > timedelta(hours=CONSULTATION_IDLE_HOURS)
+
+
+def _staff_involved(ticket: Ticket) -> bool:
+    """Заявкой занимались люди: перехват, ответственный, ответ или любое действие."""
+    return (ticket.answer_mode != Ticket.AnswerMode.AI or bool(ticket.assignee_id)
+            or ticket.events.filter(user__isnull=False).exists()
+            or ticket.messages.filter(author=Message.Author.STAFF).exists())
 
 
 def current_ticket(citizen) -> tuple[Ticket | None, Ticket | None]:
@@ -51,12 +46,17 @@ def current_ticket(citizen) -> tuple[Ticket | None, Ticket | None]:
     Открытая заявка, в которую пойдёт новое сообщение жителя.
 
     Возвращает (заявка или None — тогда нужна новая, закрытая сейчас
-    справочная заявка или None). Закрытие — статус «Выполнена» с пометкой
-    в ленте, по которой видно, что это сделала система, а не сотрудник.
+    заявка или None). После паузы новое сообщение — всегда новая заявка
+    со своей темой: старая не держит чужие разговоры. При этом старая
+    закрывается («Выполнена», с пометкой системы в ленте), только если это
+    не жалоба и сотрудники к ней не прикасались; жалоба и всё, чем заняты
+    люди, остаётся открытым в работе.
     """
     ticket = citizen.tickets.open().order_by("-created_at").first()
-    if ticket is None or not _is_idle_consultation(ticket):
+    if ticket is None or not _is_idle(ticket):
         return ticket, None
+    if ticket.kind == Ticket.Kind.APPEAL or _staff_involved(ticket):
+        return None, None
     ticket.status = Ticket.Status.DONE
     ticket.save(update_fields=["status", "updated_at"])
     Event.objects.create(ticket=ticket, kind="status",

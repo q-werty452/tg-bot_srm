@@ -17,7 +17,7 @@
         <td class="mono small">{{ e.created_at|date:"d.m.Y H:i" }}</td>
         <td>{{ e.user|default:"—" }}</td>
         <td>{{ e.action }}</td>
-        <td>{{ e.obj }}</td>
+        <td>{% if e.ticket_number %}<a href="{% url 'ticket_detail' e.ticket_number %}">{{ e.obj }}</a>{% else %}{{ e.obj }}{% endif %}</td>
         <td class="muted small">{{ e.summary }}</td>
       </tr>
       {% empty %}

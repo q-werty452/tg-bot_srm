@@ -46,22 +46,32 @@ class LifecycleTests(APITestCase):
         self.age(first["ticket_id"], 2)
         self.assertEqual(self.incoming("а часы работы?")["ticket_id"], first["ticket_id"])
 
-    def test_appeal_never_closed_by_silence(self):
+    def test_appeal_after_pause_new_ticket_old_stays_open(self):
         first = self.incoming("Нет воды")
         Ticket.objects.filter(pk=first["ticket_id"]).update(kind="appeal")
         self.age(first["ticket_id"], 24 * 7)
-        second = self.incoming("Когда сделают?")
-        self.assertEqual(second["ticket_id"], first["ticket_id"])
+        second = self.incoming("Здравствуйте, другой вопрос")
+        self.assertNotEqual(second["ticket_id"], first["ticket_id"])
+        self.assertIsNone(second["closed_ticket"])
         self.assertTrue(Ticket.objects.get(pk=first["ticket_id"]).is_open)
+        self.assertEqual(self.incoming("ещё")["ticket_id"], second["ticket_id"])
 
-    def test_staff_touched_question_not_closed(self):
+    def test_old_ticket_without_kind_closed_after_pause(self):
+        first = self.incoming("Привет")
+        self.age(first["ticket_id"], 24 * 20)
+        second = self.incoming("Новый разговор")
+        self.assertEqual(second["closed_ticket"], first["number"])
+
+    def test_staff_touched_ticket_kept_open_but_new_ticket(self):
         first = self.incoming("Где ЦОН?")
         user = get_user_model().objects.create_user("op", password="x")
         Ticket.objects.filter(pk=first["ticket_id"]).update(kind="question")
         Event.objects.create(ticket_id=first["ticket_id"], user=user, kind="status",
                              payload={"to": "in_progress"})
         self.age(first["ticket_id"], 30)
-        self.assertEqual(self.incoming("ещё вопрос")["ticket_id"], first["ticket_id"])
+        second = self.incoming("ещё вопрос")
+        self.assertNotEqual(second["ticket_id"], first["ticket_id"])
+        self.assertTrue(Ticket.objects.get(pk=first["ticket_id"]).is_open)
 
     def test_split_moves_new_topic(self):
         first = self.incoming("Нет воды в Масы")

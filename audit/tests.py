@@ -38,3 +38,16 @@ class AuditTests(TestCase):
         html = self.client.get("/audit/?q=рассылка").content.decode()
         self.assertIn("рассылка отправлена", html)
         self.assertNotIn("ключ заменён", html)
+
+
+class AuditTicketLinkTests(__import__("django.test", fromlist=["TestCase"]).TestCase):
+    def test_ticket_number_links_to_card(self):
+        from django.contrib.auth import get_user_model
+        from audit.models import Entry
+        user = get_user_model().objects.create_user("aud", password="x", is_staff=True, is_superuser=True)
+        Entry.objects.create(user=user, action="ответ жителю", obj="#2026-0032", summary="x")
+        Entry.objects.create(user=user, action="ключ", obj="openai", summary="x")
+        self.client.force_login(user)
+        page = self.client.get("/audit/")
+        self.assertContains(page, 'href="/tickets/2026-0032/"')
+        self.assertNotContains(page, 'href="/tickets/openai/"')
